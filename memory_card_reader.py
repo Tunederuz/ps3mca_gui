@@ -30,6 +30,13 @@ class Ps2MemoryCardReader(ABC):
         pass
     
     @abstractmethod
+    def close(self) -> None:
+        """
+        Closes the memory card connection.
+        """
+        pass
+
+    @abstractmethod
     def read_cluster(self, number: int, include_ecc: bool = False) -> bytes:
         """
         Reads a cluster from the memory card.
@@ -243,6 +250,9 @@ class VirtualPs2MemoryCardReader(Ps2MemoryCardReader):
 
     def open(self) -> None:
         self.memory_card_file = open(self.file_path, "rb")
+    
+    def close(self) -> None:
+        self.memory_card_file.close()
     
     def read_cluster(self, number: int, include_ecc: bool = False) -> bytes:
         superblock_info = self.get_superblock_info()
@@ -589,6 +599,10 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
         self.cardsize, self.blocksize, self.pagesize = struct.unpack(">IHH", specs)
         self.erased = 0x00 if self.cardflags & CF_ERASE_ZEROES else 0xff
         self.eccsize = 16 if self.cardflags & CF_USE_ECC else 0
+    
+    def close(self) -> None:
+        usb.util.dispose_resources(self.dev)
+        self.dev = None
     
     def read_cluster(self, number: int, include_ecc: bool = False) -> bytes:
         superblock_info = self.get_superblock_info()

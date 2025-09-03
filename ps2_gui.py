@@ -243,7 +243,8 @@ class Ps2MemoryCardGUI:
                 self.root.after(0, self.on_connection_success)
                 
             except Exception as e:
-                self.root.after(0, lambda: self.on_connection_error(str(e)))
+                error_msg = str(e)  # Capture the error message
+                self.root.after(0, lambda: self.on_connection_error(error_msg))
                 
         threading.Thread(target=connect_thread, daemon=True).start()
         
@@ -292,8 +293,7 @@ class Ps2MemoryCardGUI:
     def disconnect(self):
         """Disconnect from memory card"""
         if self.current_reader:
-            if hasattr(self.current_reader, 'memory_card_file') and self.current_reader.memory_card_file:
-                self.current_reader.memory_card_file.close()
+            self.current_reader.close()
             self.current_reader = None
             
         self.current_file_path = None
