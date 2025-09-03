@@ -190,19 +190,20 @@ class Ps2MemoryCardReader(ABC):
 
     def get_root_directory_cluster(self):
         superblock_info = self.get_superblock_info()
-        return superblock_info['rootdir_cluster'] + superblock_info['alloc_offset']
+        return superblock_info['rootdir_cluster']
 
     def get_directories_clusters(self, start_cluster):
+        print(f"Getting directories clusters from {start_cluster}")
         superblock_info = self.get_superblock_info()
         alloc_offset = superblock_info['alloc_offset']
         directories = []
         cluster = start_cluster
         while True:
-            directories.append(cluster)
-            entry = self.get_fat_entry(cluster - alloc_offset)
+            directories.append(alloc_offset + cluster)
+            entry = self.get_fat_entry(cluster)
             if entry == 0xFFFFFFFF:
                 break
-            cluster = alloc_offset + (entry & 0x7FFFFFFF)
+            cluster = entry & 0x7FFFFFFF
         return directories
 
     def get_directories_entries(self, start_cluster):
