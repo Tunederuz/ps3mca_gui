@@ -51,6 +51,9 @@ class Ps2MemoryCardGUI:
         # Directory listing frame
         self.setup_directory_frame(main_frame)
         
+        # Navigation frame
+        self.setup_navigation_frame(main_frame)
+        
         # Status bar
         self.setup_status_bar(main_frame)
         
@@ -145,6 +148,30 @@ class Ps2MemoryCardGUI:
         dir_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # Initially empty (no items to show)
+        
+        # Bind double-click event for folder navigation
+        self.dir_tree.bind('<Double-1>', self.on_tree_double_click)
+        
+        # Navigation state variables
+        self.navigation_stack = []
+        self.current_directory = None
+        
+    def setup_navigation_frame(self, parent):
+        """Setup the navigation frame"""
+        nav_frame = tk.LabelFrame(parent, text="🗺️ Navigation", bg='#2b2b2b', fg='#ffffff',
+                                  font=('Arial', 12, 'bold'))
+        nav_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # Back button
+        self.back_btn = tk.Button(nav_frame, text="⬅️ Back", command=self.navigate_back,
+                                   bg='#4a4a4a', fg='#ffffff', font=('Arial', 10, 'bold'),
+                                   relief=tk.FLAT, padx=10, pady=5)
+        self.back_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Current directory label
+        self.current_dir_label = tk.Label(nav_frame, text="📁 Current Directory: /", 
+                                         bg='#2b2b2b', fg='#ffffff', font=('Arial', 10))
+        self.current_dir_label.pack(side=tk.LEFT, padx=5)
         
     def setup_status_bar(self, parent):
         """Setup the status bar"""
@@ -311,7 +338,7 @@ class Ps2MemoryCardGUI:
             root_cluster = self.current_reader.get_root_directory_cluster()
             
             # Get directory entries
-            entries = self.current_reader.get_directories_entries(root_cluster)
+            entries = self.current_reader.get_directory_content(root_cluster)
             
             # Populate tree
             for entry in entries:
@@ -345,10 +372,130 @@ class Ps2MemoryCardGUI:
                     item = self.dir_tree.insert('', 'end', text=f"{type_icon} {name}", 
                                               values=(type_text, size_str, entry['modified'], entry['cluster']))
                     
-            # Tree is always enabled, just populated with items
+            # Update current directory label
+            self.current_directory = root_cluster
+            self.current_dir_label.config(text=f"📁 Current Directory: Cluster {root_cluster}")
             
         except Exception as e:
             messagebox.showerror("Directory Error", f"Failed to load directory: {str(e)}")
+
+    def on_tree_double_click(self, event):
+        """Handle double-click on the directory tree to navigate into folders"""
+        selected_item = self.dir_tree.selection()
+        if not selected_item:
+            return
+            
+        item_id = selected_item[0]
+        item_values = self.dir_tree.item(item_id)['values']
+        
+        if not item_values:
+            return
+            
+        # Check if it's a directory
+        if item_values[0] == "DIR":
+            # Get the cluster number from the values
+            cluster_num = item_values[3]  # Cluster column
+            
+            if cluster_num is not None:
+                self.navigate_to_directory(cluster_num)
+    
+    def navigate_to_directory(self, cluster_num):
+        """Navigate to a specific directory cluster"""
+        if not self.current_reader:
+            messagebox.showwarning("Not Connected", "Please connect to a memory card first.")
+            return
+            
+        try:
+            # Store current directory in navigation stack
+            if self.current_directory is not None:
+                self.navigation_stack.append(self.current_directory)
+            
+            # Navigate to the new directory using existing method
+            entries = self.current_reader.get_directory_content(cluster_num)
+            
+            if entries:
+                # Update current directory
+                self.current_directory = cluster_num
+                
+                # Clear and repopulate the tree
+                self.populate_directory_tree(entries)
+                
+                # Update status and current directory label
+                self.status_var.set(f"📁 Navigated to directory cluster {cluster_num}")
+                self.current_dir_label.config(text=f"📁 Current Directory: Cluster {cluster_num}")
+            else:
+                messagebox.showinfo("Empty Directory", f"Directory cluster {cluster_num} is empty or could not be read.")
+                
+        except Exception as e:
+            messagebox.showerror("Navigation Error", f"Failed to navigate to cluster {cluster_num}: {str(e)}")
+            self.status_var.set(f"Navigation failed: {str(e)}")
+    
+    def navigate_back(self):
+        """Navigate back to the previous directory"""
+        if not self.navigation_stack:
+            return
+            
+        try:
+            # Get previous directory from stack
+            previous_cluster = self.navigation_stack.pop()
+            
+            # Navigate back using existing method
+            entries = self.current_reader.get_directory_content(previous_cluster)
+            
+            if entries:
+                # Update current directory
+                self.current_directory = previous_cluster
+                
+                # Clear and repopulate the tree
+                self.populate_directory_tree(entries)
+                
+                # Update status and current directory label
+                self.status_var.set(f"⬅️ Navigated back to cluster {previous_cluster}")
+                self.current_dir_label.config(text=f"📁 Current Directory: Cluster {previous_cluster}")
+            else:
+                messagebox.showinfo("Navigation Error", f"Could not navigate back to cluster {previous_cluster}")
+                
+        except Exception as e:
+            messagebox.showerror("Navigation Error", f"Failed to navigate back: {str(e)}")
+            self.status_var.set(f"Navigation failed: {str(e)}")
+    
+    def populate_directory_tree(self, entries):
+        """Populate the directory tree with entries"""
+        # Clear existing items
+        for item in self.dir_tree.get_children():
+            self.dir_tree.delete(item)
+        
+        # Populate tree with new entries
+        for entry in entries:
+            if entry:
+                # Type icon and text
+                if entry['is_dir']:
+                    type_icon = "📁"
+                    type_text = "DIR"
+                    if entry['is_hidden']:
+                        type_text = f"{type_text} [HIDDEN]"
+                elif entry['is_ps1']:
+                    type_icon = "🎮"
+                    type_text = "PS1"
+                elif entry['is_pocketstation']:
+                    type_icon = "📱"
+                    type_text = "PS"
+                else:
+                    type_icon = "📄"
+                    type_text = "FILE"
+                
+                # Size formatting
+                if entry['is_dir']:
+                    size_str = "<DIR>"
+                else:
+                    size_str = f"{entry['length']:,}"
+                
+                # Name
+                name = entry['name']
+                
+                # Insert into tree
+                self.dir_tree.insert('', 'end', text=f"{type_icon} {name}", 
+                                   values=(type_text, size_str, entry['modified'], entry['cluster']))
 
 def main():
     root = tk.Tk()
