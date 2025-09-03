@@ -51,6 +51,13 @@ class Ps2MemoryCardReader(ABC):
         pass
 
     @abstractmethod
+    def write_cluster(self, number: int, data: bytes):
+        """
+        Writes a cluster to the memory card.
+        """
+        pass
+
+    @abstractmethod
     def generate_superblock_info(self) -> dict:
         """
         Extracts the superblock from the memory card.
@@ -281,6 +288,25 @@ class VirtualPs2MemoryCardReader(Ps2MemoryCardReader):
             data = data1 + data2
 
         return data
+
+    def write_cluster(self, number: int, data: bytes):
+        superblock_info = self.get_superblock_info()
+        pages_per_cluster = superblock_info['pages_per_cluster']
+        include_ecc = self.has_ecc_support()
+
+        if include_ecc and len(data) != self.pagesize * 2 + 16 * 2:
+            raise ValueError("Write cluster data is not the correct length")
+
+        if not include_ecc and len(data) != self.pagesize * 2:
+            raise ValueError("Write cluster data is not the correct length")
+
+        self.memory_card_file.seek(number * pages_per_cluster * self.pagesize)
+        self.memory_card_file.write(data[0:self.pagesize])
+        if include_ecc:
+            self.memory_card_file.write(data[self.pagesize:self.pagesize+16])
+        self.memory_card_file.write(data[self.pagesize:self.pagesize*2])
+        if include_ecc:
+            self.memory_card_file.write(data[self.pagesize*2:self.pagesize*2+16])
     
     def generate_superblock_info(self) -> dict:
         self.memory_card_file.seek(0)
@@ -618,6 +644,30 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
             data = bytes(page0) + bytes(page1)
 
         return data
+    
+    def write_cluster(self, number: int, data: bytes):
+        superblock_info = self.get_superblock_info()
+        pages_per_cluster = superblock_info['pages_per_cluster']
+        include_ecc = self.has_ecc_support()
+
+        if include_ecc and len(data) != self.pagesize * 2 + 16 * 2:
+            raise ValueError("Write cluster data is not the correct length")
+
+        if not include_ecc and len(data) != self.pagesize * 2:
+            raise ValueError("Write cluster data is not the correct length")
+
+        page0 = data[0:self.pagesize]
+        ecc0 = data[self.pagesize:self.pagesize+16]
+
+        page1 = data[self.pagesize:self.pagesize*2]
+        ecc1 = data[self.pagesize*2:self.pagesize*2+16]
+
+        if include_ecc:
+            page0 = bytes(page0) + bytes(ecc0)
+            page1 = bytes(page1) + bytes(ecc1)
+
+        self.write_page(number * pages_per_cluster, page0, ecc0)
+        self.write_page(number * pages_per_cluster + 1, page1, ecc1)
     
     def generate_superblock_info(self) -> dict:
         page0, ecc0 = self.read_page(0)
