@@ -30,13 +30,13 @@ class Ps2MemoryCardReader(ABC):
         pass
     
     @abstractmethod
-    def read_cluster(self, number: int) -> bytes:
+    def read_cluster(self, number: int, include_ecc: bool = False) -> bytes:
         """
         Reads a cluster from the memory card.
         
         Args:
             number: The cluster number to read (because we're not psychic)
-            
+            include_ecc: Whether to include the ECC data in the returned bytes
         Returns:
             The cluster data as bytes, or empty bytes if something goes wrong
             (which it probably will, because memory cards are finicky little beasts)
@@ -244,9 +244,12 @@ class VirtualPs2MemoryCardReader(Ps2MemoryCardReader):
     def open(self) -> None:
         self.memory_card_file = open(self.file_path, "rb")
     
-    def read_cluster(self, number: int) -> bytes:
+    def read_cluster(self, number: int, include_ecc: bool = False) -> bytes:
         superblock_info = self.get_superblock_info()
         has_ecc = self.has_ecc_support()
+
+        if include_ecc and not has_ecc:
+            raise ValueError("ECC is not supported by the card")
 
         page_size = superblock_info['page_len']
 
@@ -262,7 +265,7 @@ class VirtualPs2MemoryCardReader(Ps2MemoryCardReader):
         data = self.memory_card_file.read(cluster_size)
 
         # TODO: Handle ECC
-        if has_ecc:
+        if has_ecc and not include_ecc:
             data1 = data[0:page_size - 16]
             data2 = data[page_size:page_size + page_size - 16]
             data = data1 + data2
@@ -587,21 +590,17 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
         self.erased = 0x00 if self.cardflags & CF_ERASE_ZEROES else 0xff
         self.eccsize = 16 if self.cardflags & CF_USE_ECC else 0
     
-    def read_cluster(self, number: int) -> bytes:
+    def read_cluster(self, number: int, include_ecc: bool = False) -> bytes:
         superblock_info = self.get_superblock_info()
-        has_ecc = self.has_ecc_support()
-
-        page_size = superblock_info['page_len']
-
-        if has_ecc:
-            page_size += 16
-
         pages_per_cluster = superblock_info['pages_per_cluster']
 
         page0, ecc0 = self.read_page(number * pages_per_cluster)
         page1, ecc1 = self.read_page(number * pages_per_cluster + 1)
 
-        data = bytes(page0) + bytes(page1)
+        if include_ecc:
+            data = bytes(page0) + bytes(ecc0) + bytes(page1) + bytes(ecc1)
+        else:
+            data = bytes(page0) + bytes(page1)
 
         return data
     
