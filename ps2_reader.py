@@ -9,7 +9,7 @@ Note: PS2 memory cards use 1056-byte clusters (1024 bytes data + 32 bytes ECC)
 
 import sys
 import os
-from memory_card_reader import VirtualPs2MemoryCardReader
+from memory_card_reader import PhysicalPs2MemoryCardReader, VirtualPs2MemoryCardReader
 
 def print_directory_listing(entries):
     """
@@ -127,7 +127,8 @@ def main():
         print(f"🔍 Reading PS2 memory card: {filename}")
         print("-" * 50)
         
-        reader = VirtualPs2MemoryCardReader(filename)
+        #reader = VirtualPs2MemoryCardReader(filename)
+        reader = PhysicalPs2MemoryCardReader()
         reader.open()        
         
         # Read and parse the superblock
