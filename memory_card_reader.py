@@ -11,6 +11,9 @@ CF_USE_ECC = 0x01          # Card supports ECC
 CF_BAD_BLOCK = 0x08        # Card may have bad blocks  
 CF_ERASE_ZEROES = 0x10     # Erased blocks have all bits set to zero
 
+PLACEHOLDER_FOLDER_NAME = '..'
+PARENT_POINTER_FOLDER_NAME = '.'
+
 class Ps2MemoryCardReader(ABC):
     """
     Abstract interface for PS2 Memory Card reading operations.
@@ -213,10 +216,20 @@ class Ps2MemoryCardReader(ABC):
             first_entry = self.parse_directory_entry(entry_data[0:512])
             second_entry = self.parse_directory_entry(entry_data[512:512+512])
 
-            if first_entry is not None:
-                entries.append(first_entry)
-            if second_entry is not None:
-                entries.append(second_entry)
+            if first_entry is not None and first_entry['name'] != PLACEHOLDER_FOLDER_NAME:
+                is_parent_directory = first_entry['name'] == PARENT_POINTER_FOLDER_NAME
+
+                if is_parent_directory:
+                    first_entry['name'] = '<Parent Directory>'
+                if not is_parent_directory or (is_parent_directory and parent_directory_cluster != self.get_root_directory_cluster()):
+                    entries.append(first_entry)
+            if second_entry is not None and second_entry['name'] != PLACEHOLDER_FOLDER_NAME:
+                is_parent_directory = second_entry['name'] == PARENT_POINTER_FOLDER_NAME
+
+                if is_parent_directory:
+                    second_entry['name'] = '<Parent Directory>'
+                if not is_parent_directory or (is_parent_directory and parent_directory_cluster != self.get_root_directory_cluster()):
+                    entries.append(second_entry)
         return entries
 
 class VirtualPs2MemoryCardReader(Ps2MemoryCardReader):
