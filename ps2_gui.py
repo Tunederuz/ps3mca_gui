@@ -114,6 +114,26 @@ class Ps2MemoryCardGUI:
                                                        font=('Consolas', 9))
         self.card_info_text.pack(fill=tk.X, padx=10, pady=10)
         
+        # Dump button (initially hidden)
+        self.dump_btn = tk.Button(self.card_frame, text="💾 Dump to .ps2 File", 
+                                 command=self.dump_physical_card,
+                                 bg='#2196F3', fg='#ffffff', font=('Arial', 12, 'bold'),
+                                 relief=tk.FLAT, padx=20, pady=5)
+        self.dump_btn.pack(pady=(0, 10))
+        self.dump_btn.pack_forget()  # Initially hidden
+        
+        # Progress bar (initially hidden)
+        self.progress_frame = tk.Frame(self.card_frame, bg='#2b2b2b')
+        self.progress_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        self.progress_frame.pack_forget()  # Initially hidden
+        
+        self.progress_label = tk.Label(self.progress_frame, text="Dumping memory card...", 
+                                      bg='#2b2b2b', fg='#ffffff', font=('Arial', 10))
+        self.progress_label.pack(anchor=tk.W)
+        
+        self.progress_bar = ttk.Progressbar(self.progress_frame, mode='determinate', length=300)
+        self.progress_bar.pack(fill=tk.X, pady=(5, 0))
+        
         # Initially disabled
         self.card_info_text.config(state=tk.DISABLED)
         
@@ -258,6 +278,10 @@ class Ps2MemoryCardGUI:
         self.load_card_info()
         self.load_directory_listing()
         
+        # Show dump button for physical cards
+        if self.is_physical:
+            self.dump_btn.pack(pady=(0, 10))
+        
         self.status_var.set("Ready")
         
     def on_connection_error(self, error_msg):
@@ -280,6 +304,10 @@ class Ps2MemoryCardGUI:
         self.card_info_text.config(state=tk.NORMAL)
         self.card_info_text.delete(1.0, tk.END)
         self.card_info_text.config(state=tk.DISABLED)
+        
+        # Hide dump button and progress bar
+        self.dump_btn.pack_forget()
+        self.progress_frame.pack_forget()
         
         # Clear all items from the tree
         for item in self.dir_tree.get_children():
@@ -340,6 +368,9 @@ class Ps2MemoryCardGUI:
             # Get directory entries
             entries = self.current_reader.get_directory_content(root_cluster)
             
+            # Sort entries by name in ascending order
+            entries = sorted(entries, key=lambda x: x['name'].lower() if x and x['name'] else '')
+            
             # Populate tree
             for entry in entries:
                 if entry:  # Skip None entries
@@ -347,8 +378,8 @@ class Ps2MemoryCardGUI:
                     if entry['is_dir']:
                         type_icon = "📁"
                         type_text = "DIR"
-                        if entry['is_hidden']:
-                            type_text = f"{type_text} [HIDDEN]"
+                        #if entry['is_hidden']:
+                        #    type_text = f"{type_text} [HIDDEN]"
                     elif entry['is_ps1']:
                         type_icon = "🎮"
                         type_text = "PS1"
@@ -465,6 +496,9 @@ class Ps2MemoryCardGUI:
         for item in self.dir_tree.get_children():
             self.dir_tree.delete(item)
         
+        # Sort entries by name in ascending order
+        entries = sorted(entries, key=lambda x: x['name'].lower() if x and x['name'] else '')
+        
         # Populate tree with new entries
         for entry in entries:
             if entry:
@@ -472,8 +506,8 @@ class Ps2MemoryCardGUI:
                 if entry['is_dir']:
                     type_icon = "📁"
                     type_text = "DIR"
-                    if entry['is_hidden']:
-                        type_text = f"{type_text} [HIDDEN]"
+                    #if entry['is_hidden']:
+                    #    type_text = f"{type_text} [HIDDEN]"
                 elif entry['is_ps1']:
                     type_icon = "🎮"
                     type_text = "PS1"
@@ -496,6 +530,98 @@ class Ps2MemoryCardGUI:
                 # Insert into tree
                 self.dir_tree.insert('', 'end', text=f"{type_icon} {name}", 
                                    values=(type_text, size_str, entry['modified'], entry['cluster']))
+
+    def dump_physical_card(self):
+        """Dump the physical memory card to a .ps2 file"""
+        if not self.current_reader or not self.is_physical:
+            messagebox.showwarning("Not Connected", "Please connect to a physical memory card first.")
+            return
+            
+        # Ask user for save location
+        file_path = filedialog.asksaveasfilename(
+            title="Save Memory Card Dump",
+            defaultextension=".ps2",
+            filetypes=[("PS2 Memory Card", "*.ps2"), ("All Files", "*.*")]
+        )
+        
+        if not file_path:
+            return
+            
+        try:
+            self.status_var.set("💾 Starting memory card dump...")
+            self.dump_btn.config(state=tk.DISABLED, text="⏳ Dumping...")
+            
+            # Show progress bar
+            self.progress_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+            self.progress_bar['value'] = 0
+            
+            # Run dump in background thread
+            def dump_thread():
+                try:
+                    # Get card specifications
+                    superblock = self.current_reader.get_superblock_info()
+                    total_clusters = superblock['clusters_per_card']
+                    
+                    with open(file_path, 'wb') as f:
+                        # Dump all clusters
+                        for cluster_num in range(total_clusters):
+                            try:
+                                cluster_data = self.current_reader.read_cluster(cluster_num, include_ecc=True)
+                                
+                                # Write cluster data
+                                f.write(bytes(cluster_data))
+                                
+                                # Update progress bar
+                                progress = ((cluster_num + 1) / total_clusters) * 100
+                                self.root.after(0, lambda p=progress: self.update_progress(p, cluster_num + 1, total_clusters))
+                                    
+                            except Exception as e:
+                                print(f"Error reading cluster {cluster_num}: {e}")
+                                # Continue with next cluster
+                                continue
+                    
+                    # Success message
+                    self.root.after(0, lambda: self.on_dump_success(file_path))
+                    
+                except Exception as e:
+                    error_msg = str(e)
+                    self.root.after(0, lambda: self.on_dump_error(error_msg))
+                    
+            threading.Thread(target=dump_thread, daemon=True).start()
+            
+        except Exception as e:
+            messagebox.showerror("Dump Error", f"Failed to start dump: {str(e)}")
+            self.status_var.set("Dump failed")
+            self.dump_btn.config(state=tk.NORMAL, text="💾 Dump to .ps2 File")
+
+    def update_progress(self, percentage, current, total):
+        """Update the progress bar and label"""
+        self.progress_bar['value'] = percentage
+        self.progress_label.config(text=f"Dumping memory card... {current}/{total} clusters ({percentage:.1f}%)")
+        self.status_var.set(f"💾 Dumping... {percentage:.1f}%")
+
+    def on_dump_success(self, file_path):
+        """Handle successful dump completion"""
+        self.status_var.set(f"✅ Dump completed: {os.path.basename(file_path)}")
+        self.dump_btn.config(state=tk.NORMAL, text="💾 Dump to .ps2 File")
+        
+        # Hide progress bar
+        self.progress_frame.pack_forget()
+        
+        # Show success message
+        messagebox.showinfo("Dump Complete", 
+                          f"Memory card successfully dumped to:\n{file_path}\n\n"
+                          f"File size: {os.path.getsize(file_path) / (1024*1024):.1f} MB")
+
+    def on_dump_error(self, error_msg):
+        """Handle dump error"""
+        self.status_var.set(f"❌ Dump failed: {error_msg}")
+        self.dump_btn.config(state=tk.NORMAL, text="💾 Dump to .ps2 File")
+        
+        # Hide progress bar
+        self.progress_frame.pack_forget()
+        
+        messagebox.showerror("Dump Error", f"Failed to dump memory card:\n{error_msg}")
 
 def main():
     root = tk.Tk()
