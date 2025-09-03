@@ -592,7 +592,8 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
                 self.magic_gate()
                 break
             except Exception as e:
-                print(e)
+                if retries == 4:
+                    raise e
             retries += 1
 
         specs, ecc = self.request_response("CS_GET_SPECS")
