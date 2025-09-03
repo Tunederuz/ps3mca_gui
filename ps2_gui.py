@@ -320,6 +320,8 @@ class Ps2MemoryCardGUI:
                     if entry['is_dir']:
                         type_icon = "📁"
                         type_text = "DIR"
+                        if entry['is_hidden']:
+                            type_text = f"{type_text} [HIDDEN]"
                     elif entry['is_ps1']:
                         type_icon = "🎮"
                         type_text = "PS1"
@@ -338,8 +340,6 @@ class Ps2MemoryCardGUI:
                     
                     # Name with hidden indicator
                     name = entry['name']
-                    if entry['is_hidden']:
-                        name = f"[HIDDEN] {name}"
                     
                     # Insert into tree
                     item = self.dir_tree.insert('', 'end', text=f"{type_icon} {name}", 
