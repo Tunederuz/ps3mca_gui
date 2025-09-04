@@ -7,3 +7,4 @@ Fully supports:
 
 WIP support:
 * Loading .ps2 files into a physical memory card
+  * File and folder corruption is happening when importing the .ps2 file content to the physical memory card
