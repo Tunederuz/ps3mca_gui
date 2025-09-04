@@ -51,6 +51,13 @@ class Ps2MemoryCardReader(ABC):
         pass
 
     @abstractmethod
+    def erase_block(self, number: int):
+        """
+        Erases a block from the memory card.
+        """
+        pass
+
+    @abstractmethod
     def write_cluster(self, number: int, data: bytes):
         """
         Writes a cluster to the memory card.
@@ -61,6 +68,13 @@ class Ps2MemoryCardReader(ABC):
     def generate_superblock_info(self) -> dict:
         """
         Extracts the superblock from the memory card.
+        """
+        pass
+
+    @abstractmethod
+    def get_card_specs(self, refresh: bool = False) -> dict:
+        """
+        Gets the specs from the memory card adapter.
         """
         pass
 
@@ -77,7 +91,7 @@ class Ps2MemoryCardReader(ABC):
         Checks if the card supports ECC (Error Correction Code).
         Returns True if CF_USE_ECC flag is set.
         """
-        return bool(self.get_superblock_info()['card_flags'] & CF_USE_ECC)
+        return bool(self.get_card_specs()['ecc'])
     
     def has_bad_blocks(self) -> bool:
         """
@@ -246,6 +260,17 @@ class Ps2MemoryCardReader(ABC):
                     entries.append(second_entry)
         return entries
 
+    def erase_all(self):
+        superblock_info = self.get_card_specs()
+        pages_per_card = superblock_info['cardsize']
+        block_size = superblock_info['blocksize']
+        block_start = 0
+        block_end = pages_per_card // block_size
+
+        print(f"Erasing {block_end} blocks")
+        for i in range(block_start, block_end):
+            self.erase_block(i)
+
 class VirtualPs2MemoryCardReader(Ps2MemoryCardReader):
     """
     A virtual PS2 Memory Card reader that reads from a file.
@@ -362,6 +387,18 @@ class VirtualPs2MemoryCardReader(Ps2MemoryCardReader):
 
         return data
 
+    def erase_block(self, number: int):
+        raise NotImplementedError("Erase block not implemented for virtual reader")
+
+    def get_card_specs(self, refresh: bool = False) -> dict:
+        return {
+            'cardsize': 16384,
+            'blocksize': 16,
+            'pagesize': 512,
+            'eccsize': 16,
+            'ecc': True
+        }
+
 class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
     """
     A PS2 Memory Card reader that reads from a physical memory card.
@@ -422,15 +459,7 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
 
     dev = None
     cardflags = None
-
-    cardsize = None
-    blocksize = None
-    pagesize = None
-    erased = None
-    eccsize = None
-
-    page_cache = {}
-    ecc_cache = {}
+    card_specs = None
 
     def request_response(self,command, data=None, reverse=True):
         wMaxPacketSize = self.dev[0][(0,0)][0].wMaxPacketSize
@@ -513,20 +542,18 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
         self.request_response("CS_PUT_SENTINEL")
 
     def read_page(self, num):
-        if num in self.page_cache:
-            return self.page_cache[num], self.ecc_cache[num]
-
         page = []
         self.request_response("CS_PUT_READ_INDEX", data=list(struct.pack(">I", num)))
-        for _ in range(self.pagesize // 8):
+        card_specs = self.get_card_specs()
+        for _ in range(card_specs['pagesize'] // 8):
             chunk, ecc = self.request_response("CS_GET_READ_8", reverse=False)
             if functools.reduce(operator.xor, chunk) != ecc:
                 raise ValueError("Read ECC error")
             page += chunk
 
-        if self.cardflags & CF_USE_ECC:
+        if card_specs['ecc']:
             old_ecc = []
-            for _ in range(((self.pagesize // 128) * 3 + 4) // 8):
+            for _ in range(((card_specs['pagesize'] // 128) * 3 + 4) // 8):
                 chunk, ecc = self.request_response("CS_GET_READ_8", reverse=False)
                 if functools.reduce(operator.xor, chunk) != ecc:
                     raise ValueError("Read ECC error")
@@ -534,7 +561,7 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
 
         self.request_response("CS_IO_FIN")
 
-        if self.cardflags & CF_USE_ECC and old_ecc[-1] != self.erased:
+        if card_specs['ecc'] and old_ecc[-1] != card_specs['erased_byte']:
             def parityOf(int_type):
                 parity = 1
                 while (int_type):
@@ -542,7 +569,7 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
                     int_type = int_type & (int_type - 1)
                 return(str(parity))
 
-            for j in range(self.pagesize // 128):
+            for j in range(card_specs['pagesize'] // 128):
                 line_parity = []
                 column_parity = 0xFF
                 for i in range(128):
@@ -582,31 +609,29 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
                 elif bits != 0:
                     pass
                     #print("Unrecoverable Error found in page", num, "chunk", j)
-
-            self.page_cache[num] = page
-            self.ecc_cache[num] = old_ecc
         return page, old_ecc
 
     def write_page(self, num, data=None, ecc=None):
         if data is None:
             raise ValueError("write page no data")
 
-        if self.cardflags & CF_USE_ECC and ecc is None:
+        card_specs = self.get_card_specs()
+
+        if self.has_ecc_support() and ecc is None:
             raise ValueError("write page no ecc")
 
         self.request_response("CS_PUT_WRITE_INDEX", data=list(struct.pack(">I", num)))
-        for i in range(self.pagesize // 8):
+        for i in range(card_specs['pagesize'] // 8):
             self.request_response("CS_PUT_WRITE_8", data=data[i*8:i*8+8], reverse=False)
 
-        if self.cardflags & CF_USE_ECC:
+        if self.has_ecc_support():
             # chunks are 128 bytes, 3 bytes per ecc, 4 byte padding
-            for i in range(((self.pagesize // 128) * 3 + 4) // 8):
+            for i in range(((card_specs['pagesize'] // 128) * 3 + 4) // 8):
                 self.request_response("CS_PUT_WRITE_8", data=ecc[i*8:i*8+8], reverse=False)
 
         self.request_response("CS_IO_FIN")
 
     def open(self) -> None:
-        # TODO: Retry 5 times if it fails
         self.dev = usb.core.find(idVendor=0x054c, idProduct=0x02ea)
         if self.dev is None:
             raise ValueError("ps3mca is not connected")
@@ -622,10 +647,7 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
                     raise e
             retries += 1
 
-        specs, ecc = self.request_response("CS_GET_SPECS")
-        self.cardsize, self.blocksize, self.pagesize = struct.unpack(">IHH", specs)
-        self.erased = 0x00 if self.cardflags & CF_ERASE_ZEROES else 0xff
-        self.eccsize = 16 if self.cardflags & CF_USE_ECC else 0
+        self.get_card_specs(refresh=True)
     
     def close(self) -> None:
         usb.util.dispose_resources(self.dev)
@@ -648,26 +670,26 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
     def write_cluster(self, number: int, data: bytes):
         superblock_info = self.get_superblock_info()
         pages_per_cluster = superblock_info['pages_per_cluster']
-        include_ecc = self.has_ecc_support()
+        card_specs = self.get_card_specs()
+        include_ecc = card_specs['ecc']
 
-        if include_ecc and len(data) != self.pagesize * 2 + 16 * 2:
+        if include_ecc and len(data) != card_specs['pagesize'] * 2 + card_specs['eccsize'] * 2:
+            raise ValueError("Write cluster data is not the correct length: " + str(len(data)))
+
+        if not include_ecc and len(data) != card_specs['pagesize'] * 2:
             raise ValueError("Write cluster data is not the correct length")
 
-        if not include_ecc and len(data) != self.pagesize * 2:
-            raise ValueError("Write cluster data is not the correct length")
+        # Extract page0 data and ECC
+        page0 = data[0:card_specs['pagesize']]
+        ecc0 = data[card_specs['pagesize']:card_specs['pagesize']+card_specs['eccsize']]
 
-        page0 = data[0:self.pagesize]
-        ecc0 = data[self.pagesize:self.pagesize+16]
+        # Extract page1 data and ECC (after page0 + ECC)
+        page1_start = card_specs['pagesize'] + card_specs['eccsize']
+        page1 = data[page1_start:page1_start + card_specs['pagesize']]
+        ecc1 = data[page1_start + card_specs['pagesize']:page1_start + card_specs['pagesize'] + card_specs['eccsize']]
 
-        page1 = data[self.pagesize:self.pagesize*2]
-        ecc1 = data[self.pagesize*2:self.pagesize*2+16]
-
-        if include_ecc:
-            page0 = bytes(page0) + bytes(ecc0)
-            page1 = bytes(page1) + bytes(ecc1)
-
-        self.write_page(number * pages_per_cluster, page0, ecc0)
-        self.write_page(number * pages_per_cluster + 1, page1, ecc1)
+        self.write_page(number * pages_per_cluster, list(page0), list(ecc0))
+        self.write_page(number * pages_per_cluster + 1, list(page1), list(ecc1))
     
     def generate_superblock_info(self) -> dict:
         page0, ecc0 = self.read_page(0)
@@ -681,6 +703,7 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
         data = {}
         # 0x00: Magic (28 bytes) - should be "Sony PS2 Memory Card Format "
         data['magic'] = superblock_info[0x00:0x1C].decode('ascii', errors='ignore').rstrip('\x00')
+        data['formatted'] = data['magic'] == "Sony PS2 Memory Card Format "
         # 0x1C: Version (12 bytes) - format version
         data['version'] = superblock_info[0x1C:0x28].decode('ascii', errors='ignore').rstrip('\x00')
         # 0x28: Page length (2 bytes, little-endian) - 512 bytes data + 16 bytes ECC = 528 total
@@ -727,3 +750,18 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
         data['card_flags'] = superblock_info[0x151]
 
         return data
+
+    def get_card_specs(self, refresh: bool = False):
+        if refresh or self.card_specs is None:
+            specs, ecc = self.request_response("CS_GET_SPECS")
+            cardsize, blocksize, pagesize = struct.unpack(">IHH", specs);
+            ecc_support = self.cardflags & CF_USE_ECC
+            eccsize = 16 if ecc_support else 0
+            erased_byte = 0x00 if self.cardflags & CF_ERASE_ZEROES else 0xff
+            self.card_specs = {'cardsize': cardsize, 'blocksize': blocksize, 'pagesize': pagesize, 'erased_byte': erased_byte, 'eccsize': eccsize, 'ecc': ecc_support}
+        return self.card_specs
+
+    def erase_block(self, number: int):
+        self.request_response("CS_PUT_ERASE_INDEX", data=list(struct.pack(">I", number)))
+        self.request_response("CS_ERASE_CONFIRM")
+        self.request_response("CS_ERASE_FIN")

@@ -4,6 +4,7 @@ PS2 Memory Card Reader GUI
 A modern interface for reading both physical and virtual PS2 memory cards
 """
 
+from time import sleep
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import threading
@@ -121,6 +122,22 @@ class Ps2MemoryCardGUI:
                                  relief=tk.FLAT, padx=20, pady=5)
         self.dump_btn.pack(pady=(0, 10))
         self.dump_btn.pack_forget()  # Initially hidden
+        
+        # Load button (initially hidden)
+        self.load_btn = tk.Button(self.card_frame, text="📥 Load from .ps2 File", 
+                                 command=self.load_to_physical_card,
+                                 bg='#FF9800', fg='#ffffff', font=('Arial', 12, 'bold'),
+                                 relief=tk.FLAT, padx=20, pady=5)
+        self.load_btn.pack(pady=(0, 10))
+        self.load_btn.pack_forget()  # Initially hidden
+        
+        # Erase All button (initially hidden)
+        self.erase_btn = tk.Button(self.card_frame, text="🗑️ Erase All", 
+                                  command=self.erase_physical_card,
+                                  bg='#F44336', fg='#ffffff', font=('Arial', 12, 'bold'),
+                                  relief=tk.FLAT, padx=20, pady=5)
+        self.erase_btn.pack(pady=(0, 10))
+        self.erase_btn.pack_forget()  # Initially hidden
         
         # Progress bar (initially hidden)
         self.progress_frame = tk.Frame(self.card_frame, bg='#2b2b2b')
@@ -279,9 +296,11 @@ class Ps2MemoryCardGUI:
         self.load_card_info()
         self.load_directory_listing()
         
-        # Show dump button for physical cards
+        # Show dump and load buttons for physical cards
         if self.is_physical:
             self.dump_btn.pack(pady=(0, 10))
+            self.load_btn.pack(pady=(0, 10))
+            self.erase_btn.pack(pady=(0, 10))
         
         self.status_var.set("Ready")
         
@@ -305,8 +324,10 @@ class Ps2MemoryCardGUI:
         self.card_info_text.delete(1.0, tk.END)
         self.card_info_text.config(state=tk.DISABLED)
         
-        # Hide dump button and progress bar
+        # Hide dump button, load button, erase button, and progress bar
         self.dump_btn.pack_forget()
+        self.load_btn.pack_forget()
+        self.erase_btn.pack_forget()
         self.progress_frame.pack_forget()
         
         # Clear all items from the tree
@@ -594,6 +615,101 @@ class Ps2MemoryCardGUI:
             self.status_var.set("Dump failed")
             self.dump_btn.config(state=tk.NORMAL, text="💾 Dump to .ps2 File")
 
+    def load_to_physical_card(self):
+        """Load a .ps2 file to the physical memory card"""
+        if not self.current_reader or not self.is_physical:
+            messagebox.showwarning("Not Connected", "Please connect to a physical memory card first.")
+            return
+            
+        # Ask user for source .ps2 file
+        file_path = filedialog.askopenfilename(
+            title="Select PS2 Memory Card File to Load",
+            filetypes=[("PS2 Memory Card", "*.ps2"), ("All Files", "*.*")]
+        )
+        
+        if not file_path:
+            return
+            
+        if not os.path.exists(file_path):
+            messagebox.showerror("File Not Found", "The selected file does not exist")
+            return
+            
+        try:
+            self.status_var.set("📥 Starting memory card load...")
+            self.load_btn.config(state=tk.DISABLED, text="⏳ Loading...")
+            self.dump_btn.config(state=tk.DISABLED)  # Disable dump button during load
+            
+            # Show progress bar
+            self.progress_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+            self.progress_bar['value'] = 0
+            self.progress_label.config(text="Loading memory card from file...")
+            
+            # Run load in background thread
+            def load_thread():
+                try:
+                    # Create virtual reader for source file
+                    virtual_reader = VirtualPs2MemoryCardReader(file_path)
+                    virtual_reader.open()
+                    
+                    # Get card specifications from both readers
+                    physical_superblock = self.current_reader.get_superblock_info()
+                    physical_specs = self.current_reader.get_card_specs()
+
+                    virtual_superblock = virtual_reader.get_superblock_info()
+                    virtual_specs = virtual_reader.get_card_specs()
+                    
+                    # Check compatibility
+                    if (physical_superblock['formatted'] and (physical_specs['cardsize'] != virtual_specs['cardsize'] or
+                        physical_specs['blocksize'] != virtual_specs['blocksize'] or
+                        physical_specs['pagesize'] != virtual_specs['pagesize'] or
+                        physical_specs['eccsize'] != virtual_specs['eccsize'])):
+                        raise ValueError("Memory card sizes don't match! Cannot load file.")
+                    
+                    total_clusters = virtual_superblock['clusters_per_card']
+
+                    print("Erasing physical card")
+                    self.current_reader.erase_all()
+
+                    sleep(5)
+
+                    print("Loading physical card")
+                    # Load all clusters
+                    for cluster_num in range(total_clusters):
+                        try:
+                            # Read cluster from virtual file
+                            cluster_data = virtual_reader.read_cluster(cluster_num, include_ecc=True)
+                            
+                            # Write cluster to physical card
+                            self.current_reader.write_cluster(cluster_num, cluster_data)
+                            
+                            # Update progress bar
+                            progress = ((cluster_num + 1) / total_clusters) * 100
+                            self.root.after(0, lambda p=progress, c=cluster_num+1, t=total_clusters: 
+                                          self.update_progress(p, c, t))
+                                
+                        except Exception as e:
+                            print(f"Error processing cluster {cluster_num}: {e}")
+                            # Continue with next cluster
+                            continue
+                    
+                    # Close virtual reader
+                    virtual_reader.close()
+                    
+                    # Success message
+                    self.root.after(0, lambda: self.on_load_success(file_path))
+                    
+                except Exception as e:
+                    error_msg = str(e)
+                    self.root.after(0, lambda: self.on_load_error(error_msg))
+                    
+            threading.Thread(target=load_thread, daemon=True).start()
+            
+        except Exception as e:
+            messagebox.showerror("Load Error", f"Failed to start load: {str(e)}")
+            self.status_var.set("Load failed")
+            self.load_btn.config(state=tk.NORMAL, text="📥 Load from .ps2 File")
+            self.dump_btn.config(state=tk.NORMAL)
+
     def update_progress(self, percentage, current, total):
         """Update the progress bar and label"""
         self.progress_bar['value'] = percentage
@@ -622,6 +738,114 @@ class Ps2MemoryCardGUI:
         self.progress_frame.pack_forget()
         
         messagebox.showerror("Dump Error", f"Failed to dump memory card:\n{error_msg}")
+
+    def on_load_success(self, file_path):
+        """Handle successful load completion"""
+        self.status_var.set(f"✅ Load completed: {os.path.basename(file_path)}")
+        self.load_btn.config(state=tk.NORMAL, text="📥 Load from .ps2 File")
+        self.dump_btn.config(state=tk.NORMAL)
+        
+        # Hide progress bar
+        self.progress_frame.pack_forget()
+        
+        # Show success message
+        messagebox.showinfo("Load Complete", 
+                          f"Memory card successfully loaded from:\n{file_path}\n\n"
+                          f"File size: {os.path.getsize(file_path) / (1024*1024):.1f} MB")
+
+    def on_load_error(self, error_msg):
+        """Handle load error"""
+        self.status_var.set(f"❌ Load failed: {error_msg}")
+        self.load_btn.config(state=tk.NORMAL, text="📥 Load from .ps2 File")
+        self.dump_btn.config(state=tk.NORMAL)
+        
+        # Hide progress bar
+        self.progress_frame.pack_forget()
+        
+        messagebox.showerror("Load Error", f"Failed to load memory card:\n{error_msg}")
+
+    def erase_physical_card(self):
+        """Erase all content from the physical memory card"""
+        if not self.current_reader or not self.is_physical:
+            messagebox.showerror("Error", "No physical memory card connected")
+            return
+            
+        # Confirmation dialog
+        result = messagebox.askyesno("Confirm Erase", 
+                                   "⚠️ WARNING: This will permanently erase ALL data on the memory card!\n\n"
+                                   "This action cannot be undone. Are you sure you want to continue?")
+        if not result:
+            return
+            
+        # Disable buttons and show progress
+        self.erase_btn.config(state=tk.DISABLED, text="🗑️ Erasing...")
+        self.dump_btn.config(state=tk.DISABLED)
+        self.load_btn.config(state=tk.DISABLED)
+        self.status_var.set("🗑️ Erasing memory card...")
+        
+        # Show progress bar
+        self.progress_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        self.progress_bar['value'] = 0
+        self.progress_label.config(text="Erasing memory card... 0%")
+        
+        def erase_thread():
+            try:
+                # Get card specs
+                superblock_info = self.current_reader.get_superblock_info()
+                total_blocks = superblock_info['clusters_per_card'] // superblock_info['pages_per_cluster'] // 16  # Assuming 16 pages per block
+                
+                # Erase all blocks
+                for block_num in range(total_blocks):
+                    self.current_reader.erase_block(block_num)
+                    
+                    # Update progress
+                    progress = ((block_num + 1) / total_blocks) * 100
+                    self.root.after(0, lambda p=progress, b=block_num+1, t=total_blocks: 
+                                  self.update_erase_progress(p, b, t))
+                
+                # Success
+                self.root.after(0, self.on_erase_success)
+                
+            except Exception as e:
+                error_msg = str(e)
+                self.root.after(0, lambda: self.on_erase_error(error_msg))
+                
+        threading.Thread(target=erase_thread, daemon=True).start()
+
+    def update_erase_progress(self, percentage, current, total):
+        """Update the erase progress bar and label"""
+        self.progress_bar['value'] = percentage
+        self.progress_label.config(text=f"Erasing memory card... {current}/{total} blocks ({percentage:.1f}%)")
+        self.status_var.set(f"🗑️ Erasing... {percentage:.1f}%")
+
+    def on_erase_success(self):
+        """Handle successful erase completion"""
+        self.status_var.set("✅ Erase completed")
+        self.erase_btn.config(state=tk.NORMAL, text="🗑️ Erase All")
+        self.dump_btn.config(state=tk.NORMAL)
+        self.load_btn.config(state=tk.NORMAL)
+        
+        # Hide progress bar
+        self.progress_frame.pack_forget()
+        
+        # Reload card info and directory
+        self.load_card_info()
+        self.load_directory_listing()
+        
+        # Show success message
+        messagebox.showinfo("Erase Complete", "Memory card has been completely erased!")
+
+    def on_erase_error(self, error_msg):
+        """Handle erase error"""
+        self.status_var.set(f"❌ Erase failed: {error_msg}")
+        self.erase_btn.config(state=tk.NORMAL, text="🗑️ Erase All")
+        self.dump_btn.config(state=tk.NORMAL)
+        self.load_btn.config(state=tk.NORMAL)
+        
+        # Hide progress bar
+        self.progress_frame.pack_forget()
+        
+        messagebox.showerror("Erase Error", f"Failed to erase memory card:\n{error_msg}")
 
 def main():
     root = tk.Tk()
