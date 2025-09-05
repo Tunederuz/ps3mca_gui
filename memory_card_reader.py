@@ -277,6 +277,32 @@ class Ps2MemoryCardReader(ABC):
             print(f"Erasing page {i}", end="\r")
             self.erase_page(i)
 
+    def read_file(self, file_cluster: int, size_in_bytes: int) -> bytes:
+        superblock_info = self.get_superblock_info()
+        specs = self.get_card_specs()
+
+        alloc_offset = superblock_info['alloc_offset']
+        cluster_location = alloc_offset + file_cluster
+        first_page_location = cluster_location * superblock_info['pages_per_cluster']
+
+        total_pages = size_in_bytes // (specs['pagesize'] + specs['eccsize']) + 1
+
+        read_bytes = 0
+        file_data = b''
+
+        for i in range(total_pages):
+            data_page, _ = self.read_page(first_page_location + i)
+            remaining_bytes = size_in_bytes - read_bytes
+
+            if remaining_bytes < len(data_page):
+                file_data += data_page[:remaining_bytes]
+                break
+            else:
+                file_data += data_page
+                read_bytes += len(data_page)
+
+        return file_data
+
 class VirtualPs2MemoryCardReader(Ps2MemoryCardReader):
     """
     A virtual PS2 Memory Card reader that reads from a file.
