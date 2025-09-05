@@ -14,155 +14,206 @@ from memory_card_reader import PhysicalPs2MemoryCardReader, VirtualPs2MemoryCard
 class Ps2MemoryCardGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("PS2 Memory Card Reader 🎮")
-        self.root.geometry("1000x700")
-        self.root.configure(bg='#2b2b2b')
+        # PS2-inspired dark mode theme
+        self.colors = {
+            'bg_primary': '#0a0a0a',           # Deep black (PS2 console color)
+            'bg_secondary': '#1a1a1a',         # Dark charcoal (PS2 surface)
+            'bg_tertiary': '#2a2a2a',          # Medium dark (PS2 accent areas)
+            'bg_elevated': '#333333',          # Elevated surfaces
+            'border': '#404040',               # Subtle borders
+            'border_accent': '#0066cc',        # PS2 signature blue borders
+            'accent_blue': '#0066cc',          # PS2 signature blue
+            'accent_blue_bright': '#0088ff',   # Bright PS2 blue
+            'accent_green': '#00cc44',         # PS2 success green
+            'accent_orange': '#ff6600',        # PS2 warning orange
+            'accent_red': '#cc0000',           # PS2 error red
+            'text_primary': '#ffffff',         # Pure white text
+            'text_secondary': '#cccccc',       # Light grey text
+            'text_muted': '#999999',           # Muted grey text
+            'text_disabled': '#666666',        # Disabled text
+            'text_accent': '#0088ff',          # PS2 blue text
+            'hover': '#333333',                # Hover states
+            'selected': '#0066cc',             # PS2 blue selection
+            'ps2_gradient_start': '#001122',   # PS2 gradient start
+            'ps2_gradient_end': '#003366'      # PS2 gradient end
+        }
         
-        # Style configuration
+        self.root.title("🎮 PS2 Memory Card Manager")
+        self.root.geometry("1200x800")
+        self.root.configure(bg=self.colors['bg_primary'])
+        self.root.minsize(1000, 700)
+        
+        # Enhanced style configuration
         self.style = ttk.Style()
         self.style.theme_use('clam')
-        self.style.configure('Title.TLabel', font=('Arial', 16, 'bold'), foreground='#ffffff')
-        self.style.configure('Header.TLabel', font=('Arial', 12, 'bold'), foreground='#ffffff')
-        self.style.configure('Info.TLabel', font=('Arial', 10), foreground='#cccccc')
+        
+        # Configure sleek dark theme styles
+        self.style.configure('Title.TLabel', 
+                           font=('Segoe UI', 22, 'bold'), 
+                           foreground=self.colors['text_primary'],
+                           background=self.colors['bg_primary'])
+        self.style.configure('Header.TLabel', 
+                           font=('Segoe UI', 12, 'bold'), 
+                           foreground=self.colors['text_primary'],
+                           background=self.colors['bg_secondary'])
+        self.style.configure('Info.TLabel', 
+                           font=('Segoe UI', 10), 
+                           foreground=self.colors['text_secondary'],
+                           background=self.colors['bg_secondary'])
+        
+        # Configure PS2 progress bar style
+        self.style.configure('PS2.Horizontal.TProgressbar',
+                           background=self.colors['accent_blue'],
+                           troughcolor=self.colors['bg_tertiary'],
+                           borderwidth=0,
+                           lightcolor=self.colors['accent_blue_bright'],
+                           darkcolor=self.colors['accent_blue'])
         
         # Variables
         self.current_reader = None
         self.current_file_path = None
         self.is_physical = False
+        self.conn_var = tk.StringVar(value="virtual")
+        self.file_path_var = tk.StringVar()
         
+        self.setup_menu_bar()
         self.setup_ui()
+        
+    def setup_menu_bar(self):
+        """Setup the application menu bar"""
+        menubar = tk.Menu(self.root, bg=self.colors['bg_secondary'], 
+                         fg=self.colors['text_primary'],
+                         activebackground=self.colors['accent_blue'],
+                         activeforeground=self.colors['text_primary'])
+        self.root.config(menu=menubar)
+        
+        # File menu
+        self.file_menu = tk.Menu(menubar, tearoff=0, 
+                           bg=self.colors['bg_secondary'], 
+                           fg=self.colors['text_primary'],
+                           activebackground=self.colors['accent_blue'],
+                           activeforeground=self.colors['text_primary'])
+        menubar.add_cascade(label="File", menu=self.file_menu)
+        self.file_menu.add_separator()
+        self.file_menu.add_command(label="Exit", command=self.root.quit)
+        
+        # Initialize menu state (will add connection options)
+        self.update_menu_state()
+        
+        # Tools menu
+        self.tools_menu = tk.Menu(menubar, tearoff=0,
+                            bg=self.colors['bg_secondary'], 
+                            fg=self.colors['text_primary'],
+                            activebackground=self.colors['accent_blue'],
+                            activeforeground=self.colors['text_primary'])
+        menubar.add_cascade(label="Tools", menu=self.tools_menu)
+        self.tools_menu.add_command(label="📊 Card Information", command=self.show_card_info_popup)
+        
+        # Initialize tools menu state
+        self.update_tools_menu_state()
         
     def setup_ui(self):
         """Setup the main UI components"""
-        # Main frame
-        main_frame = tk.Frame(self.root, bg='#2b2b2b')
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Main frame with sleek styling
+        main_frame = tk.Frame(self.root, bg=self.colors['bg_primary'])
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         
-        # Title
-        title_label = tk.Label(main_frame, text="🎮 PS2 Memory Card Reader", 
-                              font=('Arial', 20, 'bold'), bg='#2b2b2b', fg='#ffffff')
-        title_label.pack(pady=(0, 20))
+        # Title with sleek styling
+        title_frame = tk.Frame(main_frame, bg=self.colors['bg_primary'])
+        title_frame.pack(fill=tk.X, pady=(0, 25))
         
-        # Connection frame
-        self.setup_connection_frame(main_frame)
+        title_label = tk.Label(title_frame, text="🎮 PS2 Memory Card Manager", 
+                              font=('Segoe UI', 28, 'bold'), 
+                              bg=self.colors['bg_primary'], 
+                              fg=self.colors['text_primary'])
+        title_label.pack()
         
-        # Card info frame
-        self.setup_card_info_frame(main_frame)
+        subtitle_label = tk.Label(title_frame, text="PlayStation 2 Memory Card Management Tool", 
+                                 font=('Segoe UI', 12), 
+                                 bg=self.colors['bg_primary'], 
+                                 fg=self.colors['text_accent'])
+        subtitle_label.pack(pady=(8, 0))
         
-        # Directory listing frame
+        # Directory listing frame (with integrated navigation)
         self.setup_directory_frame(main_frame)
         
-        # Navigation frame
-        self.setup_navigation_frame(main_frame)
+        # Progress bar frame
+        self.setup_progress_frame(main_frame)
         
         # Status bar
         self.setup_status_bar(main_frame)
         
-    def setup_connection_frame(self, parent):
-        """Setup the connection/selection frame"""
-        conn_frame = tk.LabelFrame(parent, text="🔌 Connection", bg='#2b2b2b', fg='#ffffff',
-                                  font=('Arial', 12, 'bold'))
-        conn_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        # Radio buttons for connection type
-        self.conn_var = tk.StringVar(value="virtual")
-        
-        virtual_radio = tk.Radiobutton(conn_frame, text="📁 Virtual Memory Card (.ps2 file)", 
-                                      variable=self.conn_var, value="virtual", 
-                                      bg='#2b2b2b', fg='#ffffff', selectcolor='#2b2b2b',
-                                      command=self.on_connection_change)
-        virtual_radio.pack(anchor=tk.W, padx=10, pady=5)
-        
-        physical_radio = tk.Radiobutton(conn_frame, text="🔌 Physical Memory Card (USB)", 
-                                       variable=self.conn_var, value="physical", 
-                                       bg='#2b2b2b', fg='#ffffff', selectcolor='#2b2b2b',
-                                       command=self.on_connection_change)
-        physical_radio.pack(anchor=tk.W, padx=10, pady=5)
-        
-        # File selection frame
-        self.file_frame = tk.Frame(conn_frame, bg='#2b2b2b')
-        self.file_frame.pack(fill=tk.X, padx=10, pady=10)
-        
-        tk.Label(self.file_frame, text="📁 Memory Card File:", bg='#2b2b2b', fg='#ffffff').pack(side=tk.LEFT)
-        
-        self.file_path_var = tk.StringVar()
-        self.file_entry = tk.Entry(self.file_frame, textvariable=self.file_path_var, 
-                                  width=50, bg='#3c3c3c', fg='#ffffff', insertbackground='#ffffff')
-        self.file_entry.pack(side=tk.LEFT, padx=(10, 5))
-        
-        self.browse_btn = tk.Button(self.file_frame, text="Browse", command=self.browse_file,
-                                   bg='#4a4a4a', fg='#ffffff', relief=tk.FLAT)
-        self.browse_btn.pack(side=tk.LEFT, padx=(0, 10))
-        
-        # Connect button
-        self.connect_btn = tk.Button(conn_frame, text="🔌 Connect", command=self.connect,
-                                    bg='#4CAF50', fg='#ffffff', font=('Arial', 12, 'bold'),
-                                    relief=tk.FLAT, padx=20, pady=5)
-        self.connect_btn.pack(pady=10)
-        
-        # Initially hide file selection for physical
-        self.on_connection_change()
-        
-    def setup_card_info_frame(self, parent):
-        """Setup the card information display frame"""
-        self.card_frame = tk.LabelFrame(parent, text="💾 Card Information", bg='#2b2b2b', fg='#ffffff',
-                                       font=('Arial', 12, 'bold'))
-        self.card_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        # Card info text widget
-        self.card_info_text = scrolledtext.ScrolledText(self.card_frame, height=8, 
-                                                       bg='#3c3c3c', fg='#ffffff',
-                                                       font=('Consolas', 9))
-        self.card_info_text.pack(fill=tk.X, padx=10, pady=10)
-        
-        # Dump button (initially hidden)
-        self.dump_btn = tk.Button(self.card_frame, text="💾 Dump to .ps2 File", 
-                                 command=self.dump_physical_card,
-                                 bg='#2196F3', fg='#ffffff', font=('Arial', 12, 'bold'),
-                                 relief=tk.FLAT, padx=20, pady=5)
-        self.dump_btn.pack(pady=(0, 10))
-        self.dump_btn.pack_forget()  # Initially hidden
-        
-        # Load button (initially hidden)
-        self.load_btn = tk.Button(self.card_frame, text="📥 Load from .ps2 File", 
-                                 command=self.load_to_physical_card,
-                                 bg='#FF9800', fg='#ffffff', font=('Arial', 12, 'bold'),
-                                 relief=tk.FLAT, padx=20, pady=5)
-        self.load_btn.pack(pady=(0, 10))
-        self.load_btn.pack_forget()  # Initially hidden
-        
-        # Erase All button (initially hidden)
-        self.erase_btn = tk.Button(self.card_frame, text="🗑️ Erase All", 
-                                  command=self.erase_physical_card,
-                                  bg='#F44336', fg='#ffffff', font=('Arial', 12, 'bold'),
-                                  relief=tk.FLAT, padx=20, pady=5)
-        self.erase_btn.pack(pady=(0, 10))
-        self.erase_btn.pack_forget()  # Initially hidden
-        
+    def setup_progress_frame(self, parent):
+        """Setup the progress bar frame"""
         # Progress bar (initially hidden)
-        self.progress_frame = tk.Frame(self.card_frame, bg='#2b2b2b')
-        self.progress_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        self.progress_frame = tk.Frame(parent, bg=self.colors['bg_primary'])
+        self.progress_frame.pack(fill=tk.X, padx=20, pady=(0, 15))
         self.progress_frame.pack_forget()  # Initially hidden
         
         self.progress_label = tk.Label(self.progress_frame, text="Dumping memory card...", 
-                                      bg='#2b2b2b', fg='#ffffff', font=('Arial', 10))
+                                      bg=self.colors['bg_primary'], 
+                                      fg=self.colors['text_primary'], 
+                                      font=('Segoe UI', 10))
         self.progress_label.pack(anchor=tk.W)
         
-        self.progress_bar = ttk.Progressbar(self.progress_frame, mode='determinate', length=300)
-        self.progress_bar.pack(fill=tk.X, pady=(5, 0))
-        
-        # Initially disabled
-        self.card_info_text.config(state=tk.DISABLED)
+        self.progress_bar = ttk.Progressbar(self.progress_frame, 
+                                          mode='determinate', 
+                                          length=400,
+                                          style='PS2.Horizontal.TProgressbar')
+        self.progress_bar.pack(fill=tk.X, pady=(8, 0))
         
     def setup_directory_frame(self, parent):
-        """Setup the directory listing frame"""
-        dir_frame = tk.LabelFrame(parent, text="📁 Directory Contents", bg='#2b2b2b', fg='#ffffff',
-                                 font=('Arial', 12, 'bold'))
-        dir_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        """Setup the directory listing frame with integrated navigation"""
+        dir_frame = tk.LabelFrame(parent, text="📁 Directory Contents", 
+                                 bg=self.colors['bg_secondary'], 
+                                 fg=self.colors['text_primary'],
+                                 font=('Segoe UI', 13, 'bold'),
+                                 relief=tk.FLAT,
+                                 bd=2,
+                                 highlightbackground=self.colors['border_accent'],
+                                 highlightthickness=2)
+        dir_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
         
-        # Directory tree
+        # Navigation controls frame
+        nav_controls = tk.Frame(dir_frame, bg=self.colors['bg_secondary'])
+        nav_controls.pack(fill=tk.X, padx=20, pady=(15, 10))
+        
+        # Back button
+        self.back_btn = tk.Button(nav_controls, text="⬅️ Back", command=self.navigate_back,
+                                 bg=self.colors['accent_blue'], 
+                                 fg=self.colors['text_primary'], 
+                                 font=('Segoe UI', 11, 'bold'),
+                                 relief=tk.FLAT, 
+                                 padx=20, 
+                                 pady=6,
+                                 activebackground=self.colors['accent_blue_bright'],
+                                 activeforeground=self.colors['text_primary'])
+        self.back_btn.pack(side=tk.LEFT, padx=(0, 18))
+        
+        # Current directory label
+        self.current_dir_label = tk.Label(nav_controls, text="📁 Current Directory: /", 
+                                         bg=self.colors['bg_secondary'], 
+                                         fg=self.colors['text_accent'], 
+                                         font=('Segoe UI', 11, 'bold'))
+        self.current_dir_label.pack(side=tk.LEFT)
+        
+        # Directory tree with custom styling (reduced height)
         self.dir_tree = ttk.Treeview(dir_frame, columns=('Type', 'Size', 'Modified', 'Cluster'), 
-                                    show='tree headings', height=15)
+                                    show='tree headings', height=10)
+        
+        # Configure PS2 treeview styling
+        self.style.configure('Treeview', 
+                           background=self.colors['bg_tertiary'],
+                           foreground=self.colors['text_primary'],
+                           fieldbackground=self.colors['bg_tertiary'],
+                           font=('Segoe UI', 10))
+        self.style.configure('Treeview.Heading',
+                           background=self.colors['bg_secondary'],
+                           foreground=self.colors['text_accent'],
+                           font=('Segoe UI', 11, 'bold'))
+        self.style.map('Treeview',
+                      background=[('selected', self.colors['accent_blue'])],
+                      foreground=[('selected', self.colors['text_primary'])])
         
         # Configure columns
         self.dir_tree.heading('#0', text='Name')
@@ -181,8 +232,8 @@ class Ps2MemoryCardGUI:
         dir_scrollbar = ttk.Scrollbar(dir_frame, orient=tk.VERTICAL, command=self.dir_tree.yview)
         self.dir_tree.configure(yscrollcommand=dir_scrollbar.set)
         
-        self.dir_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        dir_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.dir_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(20, 0), pady=12)
+        dir_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=12)
         
         # Initially empty (no items to show)
         
@@ -193,37 +244,191 @@ class Ps2MemoryCardGUI:
         self.navigation_stack = []
         self.current_directory = None
         
-    def setup_navigation_frame(self, parent):
-        """Setup the navigation frame"""
-        nav_frame = tk.LabelFrame(parent, text="🗺️ Navigation", bg='#2b2b2b', fg='#ffffff',
-                                  font=('Arial', 12, 'bold'))
-        nav_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        # Back button
-        self.back_btn = tk.Button(nav_frame, text="⬅️ Back", command=self.navigate_back,
-                                   bg='#4a4a4a', fg='#ffffff', font=('Arial', 10, 'bold'),
-                                   relief=tk.FLAT, padx=10, pady=5)
-        self.back_btn.pack(side=tk.LEFT, padx=5)
-        
-        # Current directory label
-        self.current_dir_label = tk.Label(nav_frame, text="📁 Current Directory: /", 
-                                         bg='#2b2b2b', fg='#ffffff', font=('Arial', 10))
-        self.current_dir_label.pack(side=tk.LEFT, padx=5)
-        
     def setup_status_bar(self, parent):
         """Setup the status bar"""
         self.status_var = tk.StringVar(value="Ready to connect")
-        status_bar = tk.Label(parent, textvariable=self.status_var, relief=tk.SUNKEN, 
-                             anchor=tk.W, bg='#1e1e1e', fg='#ffffff')
-        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        status_bar = tk.Label(parent, textvariable=self.status_var, 
+                             relief=tk.FLAT, 
+                             anchor=tk.W, 
+                             bg=self.colors['bg_secondary'], 
+                             fg=self.colors['text_secondary'],
+                             font=('Segoe UI', 11),
+                             padx=20,
+                             pady=10)
+        status_bar.pack(side=tk.BOTTOM, fill=tk.X, pady=(15, 0))
+        
+    def show_card_info_popup(self):
+        """Show card information in a popup window"""
+        if not self.current_reader:
+            messagebox.showwarning("No Connection", "Please connect to a memory card first.")
+            return
+            
+        # Create popup window
+        popup = tk.Toplevel(self.root)
+        popup.title("📊 Memory Card Information")
+        popup.geometry("600x500")
+        popup.configure(bg=self.colors['bg_primary'])
+        popup.resizable(True, True)
+        
+        # Center the popup
+        popup.transient(self.root)
+        popup.grab_set()
+        
+        # Main frame
+        main_frame = tk.Frame(popup, bg=self.colors['bg_primary'])
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # Title
+        title_label = tk.Label(main_frame, text="📊 PlayStation 2 Memory Card Information", 
+                              font=('Segoe UI', 20, 'bold'), 
+                              bg=self.colors['bg_primary'], 
+                              fg=self.colors['text_primary'])
+        title_label.pack(pady=(0, 20))
+        
+        # Card info text widget
+        card_info_text = scrolledtext.ScrolledText(main_frame, 
+                                                  bg=self.colors['bg_tertiary'], 
+                                                  fg=self.colors['text_primary'],
+                                                  font=('Consolas', 10),
+                                                  relief=tk.FLAT,
+                                                  bd=1,
+                                                  insertbackground=self.colors['text_primary'],
+                                                  selectbackground=self.colors['accent_blue'],
+                                                  selectforeground=self.colors['text_primary'])
+        card_info_text.pack(fill=tk.BOTH, expand=True, pady=(0, 20))
+        
+        # Load card information
+        try:
+            superblock = self.current_reader.get_superblock_info()
+            
+            # Calculate total size
+            total_size_mb = (superblock['clusters_per_card'] * superblock['pages_per_cluster'] * 528) / (1024*1024)
+            
+            info_text = f"""🎮 PS2 Memory Card - {total_size_mb:.1f} MB
+{'─' * 60}
+
+📊 SPECIFICATIONS
+  Size: {total_size_mb:.1f} MB ({superblock['clusters_per_card']:,} clusters)
+  Format: {superblock['magic']} v{superblock['version']}
+  Page Size: {superblock['page_len']} bytes
+  Block Size: {superblock['pages_per_block']} pages
+
+🔧 FEATURES
+  ECC Support: {'✓' if self.current_reader.has_ecc_support() else '✗'}
+  Bad Block Management: {'✓' if self.current_reader.has_bad_blocks() else '✗'}
+  Erase Mode: {'Zero' if self.current_reader.erased_blocks_are_zeroes() else 'One'}
+
+📁 STRUCTURE
+  Root Directory: Cluster {superblock['rootdir_cluster']}
+  Allocation Range: {superblock['alloc_offset']} - {superblock['alloc_end']}
+  Backup Blocks: {superblock['backup_block1']}, {superblock['backup_block2']}
+"""
+            
+            card_info_text.insert(1.0, info_text)
+            card_info_text.config(state=tk.DISABLED)
+            
+        except Exception as e:
+            card_info_text.insert(1.0, f"Error loading card info: {str(e)}")
+            card_info_text.config(state=tk.DISABLED)
+        
+        # Close button
+        close_btn = tk.Button(main_frame, text="Close", command=popup.destroy,
+                             bg=self.colors['accent_blue'], 
+                             fg=self.colors['text_primary'], 
+                             font=('Segoe UI', 12, 'bold'),
+                             relief=tk.FLAT, 
+                             padx=35, 
+                             pady=10,
+                             activebackground=self.colors['accent_blue_bright'],
+                             activeforeground=self.colors['text_primary'])
+        close_btn.pack()
+        
+    def update_menu_state(self):
+        """Update menu items based on connection state"""
+        # Clear existing disconnect/close commands if they exist
+        try:
+            self.file_menu.delete("🔌 Disconnect")
+        except:
+            pass
+        try:
+            self.file_menu.delete("📁 Close Memory Card File")
+        except:
+            pass
+            
+        # Clear existing connection commands if they exist
+        try:
+            self.file_menu.delete("📁 Load Memory Card File")
+            self.file_menu.delete("🔌 Connect to Physical Memory Card")
+        except:
+            pass
+            
+        if self.current_reader:
+            # Connected state - show disconnect option
+            if self.is_physical:
+                # Physical card connected - show disconnect
+                self.file_menu.insert_command(0, label="🔌 Disconnect", command=self.disconnect)
+            else:
+                # Virtual card loaded - show close option
+                self.file_menu.insert_command(0, label="📁 Close Memory Card File", command=self.disconnect)
+            # Hide connection options when connected
+        else:
+            # Not connected - show connection options
+            self.file_menu.insert_command(0, label="📁 Load Memory Card File", command=self.load_memory_card_file)
+            self.file_menu.insert_command(1, label="🔌 Connect to Physical Memory Card", command=self.connect_to_physical_card)
+        
+    def update_tools_menu_state(self):
+        """Update tools menu items based on connection state"""
+        # Clear existing physical card tools if they exist
+        try:
+            self.tools_menu.delete("💾 Dump to .ps2 File")
+        except:
+            pass
+        try:
+            self.tools_menu.delete("📥 Load from .ps2 File")
+        except:
+            pass
+        try:
+            self.tools_menu.delete("🧹 Erase All")
+        except:
+            pass
+        try:
+            self.tools_menu.delete("separator")
+        except:
+            pass
+            
+        # Add physical card tools only if physical card is connected
+        if self.current_reader and self.is_physical:
+            self.tools_menu.add_separator()
+            self.tools_menu.add_command(label="💾 Dump to .ps2 File", command=self.dump_physical_card)
+            self.tools_menu.add_command(label="📥 Load from .ps2 File", command=self.load_to_physical_card)
+            self.tools_menu.add_command(label="🧹 Erase All", command=self.erase_physical_card)
+        
+    def load_memory_card_file(self):
+        """Load a memory card file from File menu"""
+        self.conn_var.set("virtual")
+        self.on_connection_change()
+        
+        # Browse for file and connect if selected
+        file_path = filedialog.askopenfilename(
+            title="Select PS2 Memory Card File",
+            filetypes=[("PS2 Memory Card", "*.ps2"), ("All Files", "*.*")]
+        )
+        if file_path:
+            self.file_path_var.set(file_path)
+            self.current_file_path = file_path
+            # Automatically connect to the selected file
+            self.connect()
+        
+    def connect_to_physical_card(self):
+        """Connect to physical memory card from File menu"""
+        self.conn_var.set("physical")
+        self.on_connection_change()
+        self.connect()
         
     def on_connection_change(self):
         """Handle connection type change"""
         if self.conn_var.get() == "physical":
-            self.file_frame.pack_forget()
             self.current_file_path = None
-        else:
-            self.file_frame.pack(fill=tk.X, padx=10, pady=10)
             
     def browse_file(self):
         """Browse for a .ps2 file"""
@@ -289,18 +494,14 @@ class Ps2MemoryCardGUI:
             
     def on_connection_success(self):
         """Handle successful connection"""
-        self.status_var.set("Connected successfully! Loading card information...")
-        self.connect_btn.config(text="🔌 Disconnect", bg='#f44336', command=self.disconnect)
+        self.status_var.set("Connected successfully! Loading directory...")
         
-        # Load card information
-        self.load_card_info()
+        # Load directory listing
         self.load_directory_listing()
         
-        # Show dump and load buttons for physical cards
-        if self.is_physical:
-            self.dump_btn.pack(pady=(0, 10))
-            self.load_btn.pack(pady=(0, 10))
-            self.erase_btn.pack(pady=(0, 10))
+        # Update menu state
+        self.update_menu_state()
+        self.update_tools_menu_state()
         
         self.status_var.set("Ready")
         
@@ -319,62 +520,20 @@ class Ps2MemoryCardGUI:
         self.is_physical = False
         
         # Reset UI
-        self.connect_btn.config(text="🔌 Connect", bg='#4CAF50', command=self.connect)
-        self.card_info_text.config(state=tk.NORMAL)
-        self.card_info_text.delete(1.0, tk.END)
-        self.card_info_text.config(state=tk.DISABLED)
         
-        # Hide dump button, load button, erase button, and progress bar
-        self.dump_btn.pack_forget()
-        self.load_btn.pack_forget()
-        self.erase_btn.pack_forget()
+        # Hide progress bar
         self.progress_frame.pack_forget()
         
         # Clear all items from the tree
         for item in self.dir_tree.get_children():
             self.dir_tree.delete(item)
             
+        # Update menu state
+        self.update_menu_state()
+        self.update_tools_menu_state()
+            
         self.status_var.set("Disconnected")
         
-    def load_card_info(self):
-        """Load and display card information"""
-        try:
-            superblock = self.current_reader.get_superblock_info()
-            
-            info_text = f"""🎮 PS2 Memory Card Information
-{'='*50}
-📋 Magic: {superblock['magic']}
-🔢 Version: {superblock['version']}
-📄 Page Length: {superblock['page_len']} bytes
-📦 Pages per Cluster: {superblock['pages_per_cluster']}
-🧱 Pages per Block: {superblock['pages_per_block']}
-💾 Clusters per Card: {superblock['clusters_per_card']:,}
-📍 Allocation Offset: {superblock['alloc_offset']}
-🏁 Allocation End: {superblock['alloc_end']}
-📁 Root Directory Cluster: {superblock['rootdir_cluster']}
-💿 Backup Block 1: {superblock['backup_block1']}
-💿 Backup Block 2: {superblock['backup_block2']}
-🎯 Card Type: {superblock['card_type']}
-🚩 Card Flags: 0x{superblock['card_flags']:02X}
-
-🔧 Card Features:
-  • ECC Support: {'Yes' if self.current_reader.has_ecc_support() else 'No'}
-  • Bad Blocks: {'Yes' if self.current_reader.has_bad_blocks() else 'No'}
-  • Erased Blocks Zeroed: {'Yes' if self.current_reader.erased_blocks_are_zeroes() else 'No'}
-
-💾 Estimated Size: {(superblock['clusters_per_card'] * superblock['pages_per_cluster'] * 528) / (1024*1024):.1f} MB
-"""
-            
-            self.card_info_text.config(state=tk.NORMAL)
-            self.card_info_text.delete(1.0, tk.END)
-            self.card_info_text.insert(1.0, info_text)
-            self.card_info_text.config(state=tk.DISABLED)
-            
-        except Exception as e:
-            self.card_info_text.config(state=tk.NORMAL)
-            self.card_info_text.delete(1.0, tk.END)
-            self.card_info_text.insert(1.0, f"Error loading card info: {str(e)}")
-            self.card_info_text.config(state=tk.DISABLED)
             
     def load_directory_listing(self):
         """Load and display directory listing"""
@@ -570,10 +729,9 @@ class Ps2MemoryCardGUI:
             
         try:
             self.status_var.set("💾 Starting memory card dump...")
-            self.dump_btn.config(state=tk.DISABLED, text="⏳ Dumping...")
             
             # Show progress bar
-            self.progress_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+            self.progress_frame.pack(fill=tk.X, padx=20, pady=(0, 15))
             self.progress_bar['value'] = 0
             
             # Run dump in background thread
@@ -594,7 +752,7 @@ class Ps2MemoryCardGUI:
                                 
                                 # Update progress bar
                                 progress = ((page_num + 1) / total_pages) * 100
-                                self.root.after(0, lambda p=progress: self.update_progress(p, page_num + 1, total_pages))
+                                self.root.after(0, lambda p=progress: self.update_progress("Dumping memory card", p, page_num + 1, total_pages))
                                     
                             except Exception as e:
                                 print(f"Error reading page {page_num}: {e}")
@@ -613,7 +771,6 @@ class Ps2MemoryCardGUI:
         except Exception as e:
             messagebox.showerror("Dump Error", f"Failed to start dump: {str(e)}")
             self.status_var.set("Dump failed")
-            self.dump_btn.config(state=tk.NORMAL, text="💾 Dump to .ps2 File")
 
     def load_to_physical_card(self):
         """Load a .ps2 file to the physical memory card"""
@@ -636,11 +793,9 @@ class Ps2MemoryCardGUI:
             
         try:
             self.status_var.set("📥 Starting memory card load...")
-            self.load_btn.config(state=tk.DISABLED, text="⏳ Loading...")
-            self.dump_btn.config(state=tk.DISABLED)  # Disable dump button during load
             
             # Show progress bar
-            self.progress_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+            self.progress_frame.pack(fill=tk.X, padx=20, pady=(0, 15))
             self.progress_bar['value'] = 0
             self.progress_label.config(text="Loading memory card from file...")
             
@@ -705,19 +860,16 @@ class Ps2MemoryCardGUI:
         except Exception as e:
             messagebox.showerror("Load Error", f"Failed to start load: {str(e)}")
             self.status_var.set("Load failed")
-            self.load_btn.config(state=tk.NORMAL, text="📥 Load from .ps2 File")
-            self.dump_btn.config(state=tk.NORMAL)
 
     def update_progress(self, text, percentage, current, total):
         """Update the progress bar and label"""
         self.progress_bar['value'] = percentage
         self.progress_label.config(text=f"{text}... {current}/{total} pages ({percentage:.1f}%)")
-        self.status_var.set(f"💾 Dumping... {percentage:.1f}%")
+        self.status_var.set(f"{text}... {percentage:.1f}%")
 
     def on_dump_success(self, file_path):
         """Handle successful dump completion"""
         self.status_var.set(f"✅ Dump completed: {os.path.basename(file_path)}")
-        self.dump_btn.config(state=tk.NORMAL, text="💾 Dump to .ps2 File")
         
         # Hide progress bar
         self.progress_frame.pack_forget()
@@ -730,7 +882,6 @@ class Ps2MemoryCardGUI:
     def on_dump_error(self, error_msg):
         """Handle dump error"""
         self.status_var.set(f"❌ Dump failed: {error_msg}")
-        self.dump_btn.config(state=tk.NORMAL, text="💾 Dump to .ps2 File")
         
         # Hide progress bar
         self.progress_frame.pack_forget()
@@ -740,8 +891,6 @@ class Ps2MemoryCardGUI:
     def on_load_success(self, file_path):
         """Handle successful load completion"""
         self.status_var.set(f"✅ Load completed: {os.path.basename(file_path)}")
-        self.load_btn.config(state=tk.NORMAL, text="📥 Load from .ps2 File")
-        self.dump_btn.config(state=tk.NORMAL)
         
         # Hide progress bar
         self.progress_frame.pack_forget()
@@ -754,8 +903,6 @@ class Ps2MemoryCardGUI:
     def on_load_error(self, error_msg):
         """Handle load error"""
         self.status_var.set(f"❌ Load failed: {error_msg}")
-        self.load_btn.config(state=tk.NORMAL, text="📥 Load from .ps2 File")
-        self.dump_btn.config(state=tk.NORMAL)
         
         # Hide progress bar
         self.progress_frame.pack_forget()
@@ -775,14 +922,11 @@ class Ps2MemoryCardGUI:
         if not result:
             return
             
-        # Disable buttons and show progress
-        self.erase_btn.config(state=tk.DISABLED, text="🗑️ Erasing...")
-        self.dump_btn.config(state=tk.DISABLED)
-        self.load_btn.config(state=tk.DISABLED)
-        self.status_var.set("🗑️ Erasing memory card...")
+        # Show progress
+        self.status_var.set("🧹 Erasing memory card...")
         
         # Show progress bar
-        self.progress_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        self.progress_frame.pack(fill=tk.X, padx=20, pady=(0, 15))
         self.progress_bar['value'] = 0
         self.progress_label.config(text="Erasing memory card... 0%")
         
@@ -799,7 +943,7 @@ class Ps2MemoryCardGUI:
                     # Update progress
                     progress = ((page_num + 1) / total_pages) * 100
                     self.root.after(0, lambda p=progress, c=page_num+1, t=total_pages: 
-                                  self.update_erase_progress("Erasing memory card", p, c, t))
+                    self.update_erase_progress(p, c, t))
                 
                 # Success
                 self.root.after(0, self.on_erase_success)
@@ -814,14 +958,11 @@ class Ps2MemoryCardGUI:
         """Update the erase progress bar and label"""
         self.progress_bar['value'] = percentage
         self.progress_label.config(text=f"Erasing memory card... {current}/{total} pages ({percentage:.1f}%)")
-        self.status_var.set(f"🗑️ Erasing... {percentage:.1f}%")
+        self.status_var.set(f"🧹 Erasing... {percentage:.1f}%")
 
     def on_erase_success(self):
         """Handle successful erase completion"""
         self.status_var.set("✅ Erase completed")
-        self.erase_btn.config(state=tk.NORMAL, text="🗑️ Erase All")
-        self.dump_btn.config(state=tk.NORMAL)
-        self.load_btn.config(state=tk.NORMAL)
         
         # Hide progress bar
         self.progress_frame.pack_forget()
@@ -836,9 +977,6 @@ class Ps2MemoryCardGUI:
     def on_erase_error(self, error_msg):
         """Handle erase error"""
         self.status_var.set(f"❌ Erase failed: {error_msg}")
-        self.erase_btn.config(state=tk.NORMAL, text="🗑️ Erase All")
-        self.dump_btn.config(state=tk.NORMAL)
-        self.load_btn.config(state=tk.NORMAL)
         
         # Hide progress bar
         self.progress_frame.pack_forget()
