@@ -76,6 +76,9 @@ class Ps2MemoryCardGUI:
         self.conn_var = tk.StringVar(value="virtual")
         self.file_path_var = tk.StringVar()
         
+        # Dictionary to store hidden data for tree items
+        self.tree_item_data = {}
+        
         self.setup_menu_bar()
         self.setup_ui()
         
@@ -198,7 +201,7 @@ class Ps2MemoryCardGUI:
         self.current_dir_label.pack(side=tk.LEFT)
         
         # Directory tree with custom styling (reduced height)
-        self.dir_tree = ttk.Treeview(dir_frame, columns=('Type', 'Size', 'Modified', 'Cluster'), 
+        self.dir_tree = ttk.Treeview(dir_frame, columns=('Type', 'Size', 'Created', 'Modified'), 
                                     show='tree headings', height=10)
         
         # Configure PS2 treeview styling
@@ -219,14 +222,14 @@ class Ps2MemoryCardGUI:
         self.dir_tree.heading('#0', text='Name')
         self.dir_tree.heading('Type', text='Type')
         self.dir_tree.heading('Size', text='Size')
+        self.dir_tree.heading('Created', text='Created')
         self.dir_tree.heading('Modified', text='Modified')
-        self.dir_tree.heading('Cluster', text='Cluster')
         
         self.dir_tree.column('#0', width=200)
         self.dir_tree.column('Type', width=80)
         self.dir_tree.column('Size', width=100)
+        self.dir_tree.column('Created', width=150)
         self.dir_tree.column('Modified', width=150)
-        self.dir_tree.column('Cluster', width=80)
         
         # Scrollbar
         dir_scrollbar = ttk.Scrollbar(dir_frame, orient=tk.VERTICAL, command=self.dir_tree.yview)
@@ -527,20 +530,25 @@ class Ps2MemoryCardGUI:
         # Clear all items from the tree
         for item in self.dir_tree.get_children():
             self.dir_tree.delete(item)
+        
+        # Clear the hidden data dictionary
+        self.tree_item_data.clear()
             
         # Update menu state
         self.update_menu_state()
         self.update_tools_menu_state()
             
         self.status_var.set("Disconnected")
-        
-            
+              
     def load_directory_listing(self):
         """Load and display directory listing"""
         try:
             # Clear existing items
             for item in self.dir_tree.get_children():
                 self.dir_tree.delete(item)
+            
+            # Clear the hidden data dictionary
+            self.tree_item_data.clear()
                 
             # Get root directory cluster
             root_cluster = self.current_reader.get_root_directory_cluster()
@@ -581,7 +589,10 @@ class Ps2MemoryCardGUI:
                     
                     # Insert into tree
                     item = self.dir_tree.insert('', 'end', text=f"{type_icon} {name}", 
-                                              values=(type_text, size_str, entry['modified'], entry['cluster']))
+                                              values=(type_text, size_str, entry['created'], entry['modified']))
+                    
+                    # Store additional hidden data in dictionary
+                    self.tree_item_data[item] = entry  # Store the entire entry dict
                     
             # Update current directory label
             self.current_directory = root_cluster
@@ -602,13 +613,36 @@ class Ps2MemoryCardGUI:
         if not item_values:
             return
             
+        # Retrieve hidden data from dictionary
+        entry_data = self.tree_item_data.get(item_id)
+        if not entry_data:
+            return
+            
         # Check if it's a directory
         if item_values[0] == "DIR":
             # Get the cluster number from the values
-            cluster_num = item_values[3]  # Cluster column
+            cluster_num = entry_data['cluster']  # Cluster column
             
             if cluster_num is not None:
                 self.navigate_to_directory(cluster_num)
+
+        if item_values[0] == "FILE":
+            file_cluster = entry_data['cluster']
+            file_data = self.current_reader.read_file(file_cluster, entry_data['length'])
+            extension = entry_data['name'].split('.')[-1] if entry_data['name'].find('.') != -1 else ''
+            if len(extension) > 0:
+                extension = f".{extension}"
+
+            file_path = filedialog.asksaveasfilename(
+                title="Save File",
+                initialfile=entry_data['name'],
+                defaultextension=f"{extension}",
+                filetypes=[("All Files", "*.*")]
+            )
+            if file_path:
+                with open(file_path, 'wb') as f:
+                    f.write(file_data)
+                messagebox.showinfo("File Saved", f"File saved to {file_path}")
     
     def navigate_to_directory(self, cluster_num):
         """Navigate to a specific directory cluster"""
@@ -676,6 +710,9 @@ class Ps2MemoryCardGUI:
         for item in self.dir_tree.get_children():
             self.dir_tree.delete(item)
         
+        # Clear the hidden data dictionary
+        self.tree_item_data.clear()
+        
         # Sort entries by name in ascending order
         entries = sorted(entries, key=lambda x: x['name'].lower() if x and x['name'] else '')
         
@@ -708,8 +745,11 @@ class Ps2MemoryCardGUI:
                 name = entry['name']
                 
                 # Insert into tree
-                self.dir_tree.insert('', 'end', text=f"{type_icon} {name}", 
-                                   values=(type_text, size_str, entry['modified'], entry['cluster']))
+                item = self.dir_tree.insert('', 'end', text=f"{type_icon} {name}", 
+                                   values=(type_text, size_str, entry['created'], entry['modified']))
+                
+                # Store additional hidden data in dictionary
+                self.tree_item_data[item] = entry
 
     def dump_physical_card(self):
         """Dump the physical memory card to a .ps2 file"""
