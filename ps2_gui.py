@@ -580,25 +580,25 @@ class Ps2MemoryCardGUI:
             def dump_thread():
                 try:
                     # Get card specifications
-                    superblock = self.current_reader.get_superblock_info()
-                    total_clusters = superblock['clusters_per_card']
+                    specs = self.current_reader.get_card_specs()
+                    total_pages = specs['cardsize']
                     
                     with open(file_path, 'wb') as f:
-                        # Dump all clusters
-                        for cluster_num in range(total_clusters):
+                        # Dump all pages
+                        for page_num in range(total_pages):
                             try:
-                                cluster_data = self.current_reader.read_cluster(cluster_num, include_ecc=True)
+                                cluster_data, ecc = self.current_reader.read_page(page_num)
                                 
-                                # Write cluster data
-                                f.write(bytes(cluster_data))
+                                # Write page data
+                                f.write(bytes(cluster_data) + bytes(ecc))
                                 
                                 # Update progress bar
-                                progress = ((cluster_num + 1) / total_clusters) * 100
-                                self.root.after(0, lambda p=progress: self.update_progress(p, cluster_num + 1, total_clusters))
+                                progress = ((page_num + 1) / total_pages) * 100
+                                self.root.after(0, lambda p=progress: self.update_progress(p, page_num + 1, total_pages))
                                     
                             except Exception as e:
-                                print(f"Error reading cluster {cluster_num}: {e}")
-                                # Continue with next cluster
+                                print(f"Error reading page {page_num}: {e}")
+                                # Continue with next page
                                 continue
                     
                     # Success message
@@ -652,20 +652,18 @@ class Ps2MemoryCardGUI:
                     virtual_reader.open()
                     
                     # Get card specifications from both readers
-                    physical_superblock = self.current_reader.get_superblock_info()
                     physical_specs = self.current_reader.get_card_specs()
 
-                    virtual_superblock = virtual_reader.get_superblock_info()
                     virtual_specs = virtual_reader.get_card_specs()
                     
                     # Check compatibility
-                    if (physical_superblock['formatted'] and (physical_specs['cardsize'] != virtual_specs['cardsize'] or
+                    if (self.current_reader.is_formatted() and (physical_specs['cardsize'] != virtual_specs['cardsize'] or
                         physical_specs['blocksize'] != virtual_specs['blocksize'] or
                         physical_specs['pagesize'] != virtual_specs['pagesize'] or
                         physical_specs['eccsize'] != virtual_specs['eccsize'])):
                         raise ValueError("Memory card sizes don't match! Cannot load file.")
                     
-                    total_clusters = virtual_superblock['clusters_per_card']
+                    total_pages = virtual_specs['cardsize']
 
                     print("Erasing physical card")
                     self.current_reader.erase_all()
@@ -674,21 +672,21 @@ class Ps2MemoryCardGUI:
 
                     print("Loading physical card")
                     # Load all clusters
-                    for cluster_num in range(total_clusters):
+                    for page_num in range(total_pages):
                         try:
                             # Read cluster from virtual file
-                            cluster_data = virtual_reader.read_cluster(cluster_num, include_ecc=True)
+                            cluster_data, ecc = virtual_reader.read_page(page_num)
                             
                             # Write cluster to physical card
-                            self.current_reader.write_cluster(cluster_num, cluster_data)
+                            self.current_reader.write_page(page_num, cluster_data, ecc)
                             
                             # Update progress bar
-                            progress = ((cluster_num + 1) / total_clusters) * 100
-                            self.root.after(0, lambda p=progress, c=cluster_num+1, t=total_clusters: 
+                            progress = ((page_num + 1) / total_pages) * 100
+                            self.root.after(0, lambda p=progress, c=page_num+1, t=total_pages: 
                                           self.update_progress(p, c, t))
                                 
                         except Exception as e:
-                            print(f"Error processing cluster {cluster_num}: {e}")
+                            print(f"Error processing page {page_num}: {e}")
                             # Continue with next cluster
                             continue
                     
@@ -713,7 +711,7 @@ class Ps2MemoryCardGUI:
     def update_progress(self, percentage, current, total):
         """Update the progress bar and label"""
         self.progress_bar['value'] = percentage
-        self.progress_label.config(text=f"Dumping memory card... {current}/{total} clusters ({percentage:.1f}%)")
+        self.progress_label.config(text=f"Dumping memory card... {current}/{total} pages ({percentage:.1f}%)")
         self.status_var.set(f"💾 Dumping... {percentage:.1f}%")
 
     def on_dump_success(self, file_path):
@@ -792,15 +790,15 @@ class Ps2MemoryCardGUI:
             try:
                 # Get card specs
                 superblock_info = self.current_reader.get_superblock_info()
-                total_blocks = superblock_info['clusters_per_card'] // superblock_info['pages_per_cluster'] // 16  # Assuming 16 pages per block
+                total_pages = superblock_info['cardsize']
                 
-                # Erase all blocks
-                for block_num in range(total_blocks):
-                    self.current_reader.erase_block(block_num)
+                # Erase all pages
+                for page_num in range(total_pages):
+                    self.current_reader.erase_page(page_num)
                     
                     # Update progress
-                    progress = ((block_num + 1) / total_blocks) * 100
-                    self.root.after(0, lambda p=progress, b=block_num+1, t=total_blocks: 
+                    progress = ((page_num + 1) / total_pages) * 100
+                    self.root.after(0, lambda p=progress, b=page_num+1, t=total_pages: 
                                   self.update_erase_progress(p, b, t))
                 
                 # Success
@@ -815,7 +813,7 @@ class Ps2MemoryCardGUI:
     def update_erase_progress(self, percentage, current, total):
         """Update the erase progress bar and label"""
         self.progress_bar['value'] = percentage
-        self.progress_label.config(text=f"Erasing memory card... {current}/{total} blocks ({percentage:.1f}%)")
+        self.progress_label.config(text=f"Erasing memory card... {current}/{total} pages ({percentage:.1f}%)")
         self.status_var.set(f"🗑️ Erasing... {percentage:.1f}%")
 
     def on_erase_success(self):

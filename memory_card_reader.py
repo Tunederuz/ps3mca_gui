@@ -37,30 +37,23 @@ class Ps2MemoryCardReader(ABC):
         pass
 
     @abstractmethod
-    def read_cluster(self, number: int, include_ecc: bool = False) -> bytes:
+    def read_page(self, number: int) -> tuple[bytes, bytes]:
         """
-        Reads a cluster from the memory card.
-        
-        Args:
-            number: The cluster number to read (because we're not psychic)
-            include_ecc: Whether to include the ECC data in the returned bytes
-        Returns:
-            The cluster data as bytes, or empty bytes if something goes wrong
-            (which it probably will, because memory cards are finicky little beasts)
+        Reads a page from the memory card.
         """
         pass
 
     @abstractmethod
-    def erase_block(self, number: int):
+    def write_page(self, number: int, data: bytes, ecc: bytes):
+        """
+        Writes a page to the memory card.
+        """
+        pass
+
+    @abstractmethod
+    def erase_page(self, number: int):
         """
         Erases a block from the memory card.
-        """
-        pass
-
-    @abstractmethod
-    def write_cluster(self, number: int, data: bytes):
-        """
-        Writes a cluster to the memory card.
         """
         pass
 
@@ -100,6 +93,13 @@ class Ps2MemoryCardReader(ABC):
         """
         return bool(self.get_superblock_info()['card_flags'] & CF_BAD_BLOCK)
     
+    def is_formatted(self) -> bool:
+        """
+        Checks if the card is formatted.
+        Returns True if the card is formatted.
+        """
+        return bool(self.get_superblock_info()['magic'] == "Sony PS2 Memory Card Format ")
+
     def erased_blocks_are_zeroes(self) -> bool:
         """
         Checks if erased blocks have all bits set to zero.
@@ -107,7 +107,7 @@ class Ps2MemoryCardReader(ABC):
         """
         return bool(self.get_superblock_info()['card_flags'] & CF_ERASE_ZEROES)
 
-    def get_fat_entry(self, fat_index):
+    def get_fat_entry(self, fat_cluster_index):
         """
         Resolve the FAT entry for a given cluster index on a PS2 memory card.
 
@@ -120,8 +120,8 @@ class Ps2MemoryCardReader(ABC):
         """
 
         # Step 1: locate the FAT cluster via double indirection
-        fat_offset       = fat_index % 256
-        indirect_index   = fat_index // 256
+        fat_offset       = fat_cluster_index % 256
+        indirect_index   = fat_cluster_index // 256
         indirect_offset  = indirect_index % 256
         dbl_indirect_idx = indirect_index // 256
 
@@ -129,14 +129,16 @@ class Ps2MemoryCardReader(ABC):
 
         # Step 2: fetch the indirect cluster number from IFC table
         indirect_cluster_num = superblock['ifc_list'][dbl_indirect_idx]
-        indirect_data = self.read_cluster(indirect_cluster_num)
+        indirect_cluster_page = indirect_cluster_num * superblock['pages_per_cluster']
+        indirect_data = self.read_page(indirect_cluster_page)[0] + self.read_page(indirect_cluster_page + 1)[0]
 
         # indirect cluster contains 256 little-endian cluster numbers
         indirect_cluster = struct.unpack("<256I", indirect_data)
         fat_cluster_num = indirect_cluster[indirect_offset]
 
         # Step 3: read the FAT cluster itself
-        fat_data = self.read_cluster(fat_cluster_num)
+        fat_cluster_page = fat_cluster_num * superblock['pages_per_cluster']
+        fat_data = self.read_page(fat_cluster_page)[0] + self.read_page(fat_cluster_page + 1)[0]
         fat_cluster = struct.unpack("<256I", fat_data)
 
         # Step 4: extract the entry for our cluster
@@ -237,10 +239,12 @@ class Ps2MemoryCardReader(ABC):
         return directories
 
     def get_directory_content(self, parent_directory_cluster):
+        superblock = self.get_superblock_info()
         directories = self.get_directory_clusters(parent_directory_cluster)
         entries = []
         for cluster in directories:
-            entry_data = self.read_cluster(cluster)
+            cluster_page = cluster * superblock['pages_per_cluster']
+            entry_data = self.read_page(cluster_page)[0] + self.read_page(cluster_page + 1)[0]
             first_entry = self.parse_directory_entry(entry_data[0:512])
             second_entry = self.parse_directory_entry(entry_data[512:512+512])
 
@@ -263,13 +267,10 @@ class Ps2MemoryCardReader(ABC):
     def erase_all(self):
         superblock_info = self.get_card_specs()
         pages_per_card = superblock_info['cardsize']
-        block_size = superblock_info['blocksize']
-        block_start = 0
-        block_end = pages_per_card // block_size
 
-        print(f"Erasing {block_end} blocks")
-        for i in range(block_start, block_end):
-            self.erase_block(i)
+        for i in range(pages_per_card):
+            print(f"Erasing page {i}", end="\r")
+            self.erase_page(i)
 
 class VirtualPs2MemoryCardReader(Ps2MemoryCardReader):
     """
@@ -286,52 +287,32 @@ class VirtualPs2MemoryCardReader(Ps2MemoryCardReader):
     def close(self) -> None:
         self.memory_card_file.close()
     
-    def read_cluster(self, number: int, include_ecc: bool = False) -> bytes:
-        superblock_info = self.get_superblock_info()
-        has_ecc = self.has_ecc_support()
+    def read_page(self, number: int) -> tuple[bytes, bytes]:
+        card_specs = self.get_card_specs()
+        page_size = card_specs['pagesize'] + card_specs['eccsize']
+        self.memory_card_file.seek(number * page_size)
+        if card_specs['ecc']:
+            return self.memory_card_file.read(page_size - card_specs['eccsize']), self.memory_card_file.read(card_specs['eccsize'])
+        else:
+            return self.memory_card_file.read(page_size), b''
 
-        if include_ecc and not has_ecc:
-            raise ValueError("ECC is not supported by the card")
+    def write_page(self, number: int, data: bytes, ecc: bytes):
+        card_specs = self.get_card_specs()
+        page_size = card_specs['pagesize']
 
-        page_size = superblock_info['page_len']
+        ecc = card_specs['ecc']
+        ecc_size = card_specs['eccsize']
 
-        if has_ecc:
-            page_size += 16
+        if len(data) != page_size:
+            raise ValueError("Write page data is not the correct length")
 
-        pages_per_cluster = superblock_info['pages_per_cluster']
+        if ecc and len(ecc) != ecc_size:
+            raise ValueError("Write page ecc is not the correct length")
 
-        cluster_start = number * pages_per_cluster * page_size
-        cluster_size = pages_per_cluster * page_size
-
-        self.memory_card_file.seek(cluster_start)
-        data = self.memory_card_file.read(cluster_size)
-
-        # TODO: Handle ECC
-        if has_ecc and not include_ecc:
-            data1 = data[0:page_size - 16]
-            data2 = data[page_size:page_size + page_size - 16]
-            data = data1 + data2
-
-        return data
-
-    def write_cluster(self, number: int, data: bytes):
-        superblock_info = self.get_superblock_info()
-        pages_per_cluster = superblock_info['pages_per_cluster']
-        include_ecc = self.has_ecc_support()
-
-        if include_ecc and len(data) != self.pagesize * 2 + 16 * 2:
-            raise ValueError("Write cluster data is not the correct length")
-
-        if not include_ecc and len(data) != self.pagesize * 2:
-            raise ValueError("Write cluster data is not the correct length")
-
-        self.memory_card_file.seek(number * pages_per_cluster * self.pagesize)
-        self.memory_card_file.write(data[0:self.pagesize])
-        if include_ecc:
-            self.memory_card_file.write(data[self.pagesize:self.pagesize+16])
-        self.memory_card_file.write(data[self.pagesize:self.pagesize*2])
-        if include_ecc:
-            self.memory_card_file.write(data[self.pagesize*2:self.pagesize*2+16])
+        self.memory_card_file.seek(number * page_size)
+        self.memory_card_file.write(data)
+        if ecc:
+            self.memory_card_file.write(ecc)
     
     def generate_superblock_info(self) -> dict:
         self.memory_card_file.seek(0)
@@ -387,7 +368,7 @@ class VirtualPs2MemoryCardReader(Ps2MemoryCardReader):
 
         return data
 
-    def erase_block(self, number: int):
+    def erase_page(self, number: int):
         raise NotImplementedError("Erase block not implemented for virtual reader")
 
     def get_card_specs(self, refresh: bool = False) -> dict:
@@ -461,7 +442,7 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
     cardflags = None
     card_specs = None
 
-    def request_response(self,command, data=None, reverse=True):
+    def request_response(self,command, data: list[int] = None, reverse: bool = True) -> tuple[list[int], int]:
         wMaxPacketSize = self.dev[0][(0,0)][0].wMaxPacketSize
         payload = self.commands[command]
         size = len(payload) + 3
@@ -541,7 +522,7 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
         # Sometimes reading hangs if the sentinel isn't explicitly set
         self.request_response("CS_PUT_SENTINEL")
 
-    def read_page(self, num):
+    def read_page(self, num: int) -> tuple[bytes, bytes]:
         page = []
         self.request_response("CS_PUT_READ_INDEX", data=list(struct.pack(">I", num)))
         card_specs = self.get_card_specs()
@@ -609,9 +590,9 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
                 elif bits != 0:
                     pass
                     #print("Unrecoverable Error found in page", num, "chunk", j)
-        return page, old_ecc
+        return bytes(page), bytes(old_ecc)
 
-    def write_page(self, num, data=None, ecc=None):
+    def write_page(self, num: int, data: bytes = None, ecc: bytes = None):
         if data is None:
             raise ValueError("write page no data")
 
@@ -622,12 +603,12 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
 
         self.request_response("CS_PUT_WRITE_INDEX", data=list(struct.pack(">I", num)))
         for i in range(card_specs['pagesize'] // 8):
-            self.request_response("CS_PUT_WRITE_8", data=data[i*8:i*8+8], reverse=False)
+            self.request_response("CS_PUT_WRITE_8", data=list(data)[i*8:i*8+8], reverse=False)
 
         if self.has_ecc_support():
             # chunks are 128 bytes, 3 bytes per ecc, 4 byte padding
             for i in range(((card_specs['pagesize'] // 128) * 3 + 4) // 8):
-                self.request_response("CS_PUT_WRITE_8", data=ecc[i*8:i*8+8], reverse=False)
+                self.request_response("CS_PUT_WRITE_8", data=list(ecc)[i*8:i*8+8], reverse=False)
 
         self.request_response("CS_IO_FIN")
 
@@ -653,44 +634,6 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
         usb.util.dispose_resources(self.dev)
         self.dev = None
     
-    def read_cluster(self, number: int, include_ecc: bool = False) -> bytes:
-        superblock_info = self.get_superblock_info()
-        pages_per_cluster = superblock_info['pages_per_cluster']
-
-        page0, ecc0 = self.read_page(number * pages_per_cluster)
-        page1, ecc1 = self.read_page(number * pages_per_cluster + 1)
-
-        if include_ecc:
-            data = bytes(page0) + bytes(ecc0) + bytes(page1) + bytes(ecc1)
-        else:
-            data = bytes(page0) + bytes(page1)
-
-        return data
-    
-    def write_cluster(self, number: int, data: bytes):
-        superblock_info = self.get_superblock_info()
-        pages_per_cluster = superblock_info['pages_per_cluster']
-        card_specs = self.get_card_specs()
-        include_ecc = card_specs['ecc']
-
-        if include_ecc and len(data) != card_specs['pagesize'] * 2 + card_specs['eccsize'] * 2:
-            raise ValueError("Write cluster data is not the correct length: " + str(len(data)))
-
-        if not include_ecc and len(data) != card_specs['pagesize'] * 2:
-            raise ValueError("Write cluster data is not the correct length")
-
-        # Extract page0 data and ECC
-        page0 = data[0:card_specs['pagesize']]
-        ecc0 = data[card_specs['pagesize']:card_specs['pagesize']+card_specs['eccsize']]
-
-        # Extract page1 data and ECC (after page0 + ECC)
-        page1_start = card_specs['pagesize'] + card_specs['eccsize']
-        page1 = data[page1_start:page1_start + card_specs['pagesize']]
-        ecc1 = data[page1_start + card_specs['pagesize']:page1_start + card_specs['pagesize'] + card_specs['eccsize']]
-
-        self.write_page(number * pages_per_cluster, list(page0), list(ecc0))
-        self.write_page(number * pages_per_cluster + 1, list(page1), list(ecc1))
-    
     def generate_superblock_info(self) -> dict:
         page0, ecc0 = self.read_page(0)
         page1, ecc1 = self.read_page(1)
@@ -703,7 +646,6 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
         data = {}
         # 0x00: Magic (28 bytes) - should be "Sony PS2 Memory Card Format "
         data['magic'] = superblock_info[0x00:0x1C].decode('ascii', errors='ignore').rstrip('\x00')
-        data['formatted'] = data['magic'] == "Sony PS2 Memory Card Format "
         # 0x1C: Version (12 bytes) - format version
         data['version'] = superblock_info[0x1C:0x28].decode('ascii', errors='ignore').rstrip('\x00')
         # 0x28: Page length (2 bytes, little-endian) - 512 bytes data + 16 bytes ECC = 528 total
@@ -761,7 +703,7 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
             self.card_specs = {'cardsize': cardsize, 'blocksize': blocksize, 'pagesize': pagesize, 'erased_byte': erased_byte, 'eccsize': eccsize, 'ecc': ecc_support}
         return self.card_specs
 
-    def erase_block(self, number: int):
+    def erase_page(self, number: int):
         self.request_response("CS_PUT_ERASE_INDEX", data=list(struct.pack(">I", number)))
         self.request_response("CS_ERASE_CONFIRM")
         self.request_response("CS_ERASE_FIN")
