@@ -671,23 +671,23 @@ class Ps2MemoryCardGUI:
                     sleep(5)
 
                     print("Loading physical card")
-                    # Load all clusters
+                    # Load all pages
                     for page_num in range(total_pages):
                         try:
-                            # Read cluster from virtual file
+                            # Read page from virtual file
                             cluster_data, ecc = virtual_reader.read_page(page_num)
                             
-                            # Write cluster to physical card
+                            # Write page to physical card
                             self.current_reader.write_page(page_num, cluster_data, ecc)
                             
                             # Update progress bar
                             progress = ((page_num + 1) / total_pages) * 100
                             self.root.after(0, lambda p=progress, c=page_num+1, t=total_pages: 
-                                          self.update_progress(p, c, t))
+                                          self.update_progress("Importing file to physical card", p, c, t))
                                 
                         except Exception as e:
                             print(f"Error processing page {page_num}: {e}")
-                            # Continue with next cluster
+                            # Continue with next page
                             continue
                     
                     # Close virtual reader
@@ -708,10 +708,10 @@ class Ps2MemoryCardGUI:
             self.load_btn.config(state=tk.NORMAL, text="📥 Load from .ps2 File")
             self.dump_btn.config(state=tk.NORMAL)
 
-    def update_progress(self, percentage, current, total):
+    def update_progress(self, text, percentage, current, total):
         """Update the progress bar and label"""
         self.progress_bar['value'] = percentage
-        self.progress_label.config(text=f"Dumping memory card... {current}/{total} pages ({percentage:.1f}%)")
+        self.progress_label.config(text=f"{text}... {current}/{total} pages ({percentage:.1f}%)")
         self.status_var.set(f"💾 Dumping... {percentage:.1f}%")
 
     def on_dump_success(self, file_path):
@@ -789,8 +789,8 @@ class Ps2MemoryCardGUI:
         def erase_thread():
             try:
                 # Get card specs
-                superblock_info = self.current_reader.get_superblock_info()
-                total_pages = superblock_info['cardsize']
+                specs = self.current_reader.get_card_specs()
+                total_pages = specs['cardsize']
                 
                 # Erase all pages
                 for page_num in range(total_pages):
@@ -798,8 +798,8 @@ class Ps2MemoryCardGUI:
                     
                     # Update progress
                     progress = ((page_num + 1) / total_pages) * 100
-                    self.root.after(0, lambda p=progress, b=page_num+1, t=total_pages: 
-                                  self.update_erase_progress(p, b, t))
+                    self.root.after(0, lambda p=progress, c=page_num+1, t=total_pages: 
+                                  self.update_erase_progress("Erasing memory card", p, c, t))
                 
                 # Success
                 self.root.after(0, self.on_erase_success)
