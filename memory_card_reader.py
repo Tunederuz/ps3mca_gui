@@ -204,8 +204,13 @@ class Ps2MemoryCardReader(ABC):
         # Attributes (4 bytes)
         entry['attr'] = struct.unpack('<I', entry_data[32:36])[0]
         
-        # Name (32 bytes, null-terminated)
-        entry['name'] = entry_data[64:96].decode('ascii', errors='ignore').rstrip('\x00')
+        # Name (32 bytes, 0-terminated), stop after first 0x00
+        name_bytes = entry_data[64:96]
+        # Find the first null terminator and slice up to that point
+        null_pos = name_bytes.find(b'\x00')
+        if null_pos != -1:
+            name_bytes = name_bytes[:null_pos]
+        entry['name'] = name_bytes.decode('ascii', errors='ignore')
         
         # Determine if it's a file or directory based on mode flags
         entry['is_dir'] = (entry['mode'] & 0x0020) != 0  # DF_DIRECTORY
