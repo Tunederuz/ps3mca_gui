@@ -5,3 +5,4 @@ Fully supports:
 * List content of Virtual Memory Card (.ps2 format from PCSX2)
 * Erase (unformat) physical Memory Card content
 * Load .ps2 files into a physical memory card
+* Extract individual files from saves
