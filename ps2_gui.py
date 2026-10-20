@@ -13,6 +13,7 @@ import os
 import native_dialogs
 import ps2_saves
 from ps2_card_writer import NotEnoughSpaceError, SaveExistsError
+from ps2_physical_writer import PhysicalCardSession, PhysicalWriteError
 from memory_card_reader import PhysicalPs2MemoryCardReader, VirtualPs2MemoryCardReader, PARENT_DIRECTORY_LABEL
 
 class Ps2MemoryCardGUI:
@@ -112,8 +113,12 @@ class Ps2MemoryCardGUI:
         # Dictionary to store hidden data for tree items
         self.tree_item_data = {}
         
+        # Set while a background task talks to the card
+        self.busy = False
+        
         self.setup_menu_bar()
         self.setup_ui()
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         
     def setup_menu_bar(self):
         """Setup the application menu bar"""
@@ -131,7 +136,7 @@ class Ps2MemoryCardGUI:
                            activeforeground=self.colors['text_primary'])
         menubar.add_cascade(label="File", menu=self.file_menu)
         self.file_menu.add_separator()
-        self.file_menu.add_command(label="Exit", command=self.root.quit)
+        self.file_menu.add_command(label="Exit", command=self.on_close)
         
         # Initialize menu state (will add connection options)
         self.update_menu_state()
@@ -392,6 +397,8 @@ class Ps2MemoryCardGUI:
         
     def show_save_menu(self, event):
         """Right-click menu for the save folder under the cursor"""
+        if self.busy:
+            return
         item = self.dir_tree.identify_row(event.y)
         if not item:
             return
@@ -403,7 +410,7 @@ class Ps2MemoryCardGUI:
         self.save_menu.delete(0, tk.END)
         self.save_menu.add_command(label="Export as .psu...", command=self.export_selected_save)
         self.save_menu.add_command(label="Extract to Folder...", command=self.extract_selected_save)
-        if self.current_reader.supports_writing():
+        if self.can_modify_card():
             self.save_menu.add_separator()
             self.save_menu.add_command(label="Delete Save", command=self.delete_selected_save)
         self.save_menu.tk_popup(event.x_root, event.y_root)
@@ -424,6 +431,8 @@ class Ps2MemoryCardGUI:
         
     def export_selected_save(self):
         """Export the selected save folder as a .psu file"""
+        if self.busy:
+            return
         name = self.selected_save_name()
         if not name:
             messagebox.showinfo("Export Save", "Select a save folder at the root of the card first.")
@@ -446,6 +455,8 @@ class Ps2MemoryCardGUI:
         
     def extract_selected_save(self):
         """Copy the files of the selected save into a folder on disk"""
+        if self.busy:
+            return
         name = self.selected_save_name()
         if not name:
             return
@@ -459,9 +470,17 @@ class Ps2MemoryCardGUI:
             return
         self.status_var.set(f"Extracted {name} to {folder}")
         
+    def can_modify_card(self):
+        """Saves can be added or deleted: writable .ps2 files and physical cards"""
+        return bool(self.current_reader) and (self.is_physical or self.current_reader.supports_writing())
+        
+    def save_names_on_card(self):
+        root = self.current_reader.get_root_directory_cluster()
+        return {entry['name'] for entry in self.current_reader.get_directory_content(root) if entry['is_dir']}
+        
     def import_save(self):
         """Add a save from a .psu file to the card"""
-        if not self.current_reader or not self.current_reader.supports_writing():
+        if self.busy or not self.can_modify_card():
             return
         path = native_dialogs.askopenfilename(
             parent=self.root,
@@ -476,47 +495,124 @@ class Ps2MemoryCardGUI:
             messagebox.showerror("Import Failed", f"Could not read {os.path.basename(path)}:\n{e}")
             return
         
-        replace = False
-        while True:
-            try:
-                ps2_saves.import_save(self.current_reader, save, replace=replace)
-                break
-            except SaveExistsError:
-                if replace or not messagebox.askyesno(
-                        "Replace Save",
-                        f"{save.name} already exists on this card.\n\n"
-                        f"Replace it with the save from {os.path.basename(path)}?"):
-                    return
-                replace = True
-            except NotEnoughSpaceError as e:
-                messagebox.showerror("Not Enough Space", str(e))
-                return
-            except Exception as e:
-                messagebox.showerror("Import Failed", f"Could not import {save.name}:\n{e}")
-                self.refresh_card()
-                return
+        replace = save.name in self.save_names_on_card()
+        if replace and not messagebox.askyesno(
+                "Replace Save",
+                f"{save.name} already exists on this card.\n\n"
+                f"Replace it with the save from {os.path.basename(path)}?"):
+            return
         
-        self.refresh_card()
-        self.select_root_entry(save.name)
-        self.status_var.set(f"Imported {save.name} ({self.format_size(save.size)})")
+        def imported():
+            self.select_root_entry(save.name)
+            self.status_var.set(f"Imported {save.name} ({self.format_size(save.size)})")
+        
+        self.run_card_change(f"Importing {save.name}",
+                             lambda reader: ps2_saves.import_save(reader, save, replace=replace),
+                             imported, "Import Failed")
         
     def delete_selected_save(self):
         """Delete the selected save folder from the card"""
         name = self.selected_save_name()
-        if not name or not self.current_reader.supports_writing():
+        if self.busy or not name or not self.can_modify_card():
             return
         if not messagebox.askyesno("Delete Save",
                                    f"Delete {name} from this card?\n\n"
                                    "This cannot be undone. Export it first to keep a copy."):
             return
-        try:
-            ps2_saves.delete_save(self.current_reader, name)
-        except Exception as e:
-            messagebox.showerror("Delete Failed", f"Could not delete {name}:\n{e}")
+        self.run_card_change(f"Deleting {name}",
+                             lambda reader: ps2_saves.delete_save(reader, name),
+                             lambda: self.status_var.set(f"Deleted {name}"), "Delete Failed")
+        
+    def run_card_change(self, description, change, on_done, failure_title):
+        """
+        Apply change(reader) to the card. A .ps2 file is changed directly, a physical
+        card through a PhysicalCardSession in the background.
+        """
+        if not self.is_physical:
+            try:
+                change(self.current_reader)
+            except Exception as e:
+                self.show_change_error(failure_title, e)
+                self.refresh_card()
+                return
             self.refresh_card()
+            on_done()
             return
-        self.refresh_card()
-        self.status_var.set(f"Deleted {name}")
+        
+        self.status_var.set(f"{description}...")
+        
+        def work(report):
+            report(description, 0, 1)
+            session = PhysicalCardSession(self.current_reader)
+            session.progress = lambda done, total: report(f"{description}, writing", done, total)
+            change(session)
+        
+        def finished(error):
+            if error is not None:
+                self.show_change_error(failure_title, error)
+            self.refresh_card()
+            if error is None:
+                on_done()
+        
+        self.run_in_background(work, finished)
+        
+    def show_change_error(self, title, error):
+        if isinstance(error, NotEnoughSpaceError):
+            messagebox.showerror("Not Enough Space", str(error))
+        elif isinstance(error, PhysicalWriteError):
+            messagebox.showerror(title,
+                                 f"Writing to the card failed: {error}.\n\n"
+                                 "The card may be left in an inconsistent state. If you have a dump "
+                                 "of it, restore it with Tools > Load from .ps2 File.")
+        else:
+            messagebox.showerror(title, str(error))
+        
+    def run_in_background(self, work, finished):
+        """Run work(report) in a thread with the progress bar, then finished(error) in the UI thread"""
+        self.set_busy(True)
+        self.show_progress()
+        self.progress_bar['value'] = 0
+        self.progress_label.config(text="Working...")
+        
+        def report(text, done, total):
+            percent = done / total * 100 if total else 0
+            self.root.after(0, lambda: (self.progress_label.config(text=f"{text}... {percent:.0f}%"),
+                                        self.progress_bar.config(value=percent)))
+        
+        def thread():
+            error = None
+            try:
+                work(report)
+            except Exception as e:
+                error = e
+            self.root.after(0, lambda: self.background_done(finished, error))
+        
+        threading.Thread(target=thread, daemon=True).start()
+        
+    def background_done(self, finished, error):
+        self.progress_frame.pack_forget()
+        self.set_busy(False)
+        finished(error)
+        
+    def set_busy(self, busy):
+        """Block card actions while a background task talks to the card"""
+        self.busy = busy
+        state = tk.DISABLED if busy else tk.NORMAL
+        for button in self.toolbar.winfo_children():
+            button.config(state=state)
+        if busy:
+            self.back_btn.config(state=tk.DISABLED)
+        else:
+            self.update_navigation_state()
+        
+    def on_close(self):
+        """Ask before quitting while a change is being written"""
+        if self.busy and not messagebox.askyesno(
+                "Quit",
+                "The card is being written to. Quitting now can leave it damaged.\n\nQuit anyway?"):
+            return
+        self.root.destroy()
+        
         
     def update_navigation_state(self):
         """Refresh the breadcrumb, the Back button and the empty hint"""
@@ -618,7 +714,7 @@ class Ps2MemoryCardGUI:
                        ("Connect Physical Card", self.connect_to_physical_card, 'secondary')]
         else:
             actions = [("Card Information", self.show_card_info_popup, 'secondary')]
-            if self.current_reader.supports_writing():
+            if self.can_modify_card():
                 actions.append(("Import Save", self.import_save, 'secondary'))
             actions.append(("Export Save", self.export_selected_save, 'secondary'))
             if self.is_physical:
@@ -632,6 +728,8 @@ class Ps2MemoryCardGUI:
         
     def show_card_info_popup(self):
         """Show card information in a popup window"""
+        if self.busy:
+            return
         if not self.current_reader:
             messagebox.showwarning("No Connection", "Please connect to a memory card first.")
             return
@@ -776,6 +874,8 @@ class Ps2MemoryCardGUI:
         
     def load_memory_card_file(self):
         """Load a memory card file from File menu"""
+        if self.busy:
+            return
         self.conn_var.set("virtual")
         self.on_connection_change()
         
@@ -793,6 +893,8 @@ class Ps2MemoryCardGUI:
         
     def connect_to_physical_card(self):
         """Connect to physical memory card from File menu"""
+        if self.busy:
+            return
         self.conn_var.set("physical")
         self.on_connection_change()
         self.connect()
@@ -888,6 +990,8 @@ class Ps2MemoryCardGUI:
         
     def disconnect(self):
         """Disconnect from memory card"""
+        if self.busy:
+            return
         if self.current_reader:
             self.current_reader.close()
             self.current_reader = None
@@ -940,6 +1044,8 @@ class Ps2MemoryCardGUI:
 
     def on_tree_double_click(self, event):
         """Handle double-click on the directory tree to navigate into folders"""
+        if self.busy:
+            return
         selected_item = self.dir_tree.selection()
         if not selected_item:
             return
@@ -1019,6 +1125,8 @@ class Ps2MemoryCardGUI:
     
     def navigate_back(self):
         """Navigate back to the previous directory"""
+        if self.busy:
+            return
         if not self.navigation_stack:
             return
             
@@ -1101,6 +1209,8 @@ class Ps2MemoryCardGUI:
 
     def dump_physical_card(self):
         """Dump the physical memory card to a .ps2 file"""
+        if self.busy:
+            return
         if not self.current_reader or not self.is_physical:
             messagebox.showwarning("Not Connected", "Please connect to a physical memory card first.")
             return
@@ -1155,6 +1265,7 @@ class Ps2MemoryCardGUI:
                     error_msg = f"{e}\n\nThe incomplete dump file was deleted."
                     self.root.after(0, lambda: self.on_dump_error(error_msg))
                     
+            self.set_busy(True)
             threading.Thread(target=dump_thread, daemon=True).start()
             
         except Exception as e:
@@ -1163,6 +1274,8 @@ class Ps2MemoryCardGUI:
 
     def load_to_physical_card(self):
         """Load a .ps2 file to the physical memory card"""
+        if self.busy:
+            return
         if not self.current_reader or not self.is_physical:
             messagebox.showwarning("Not Connected", "Please connect to a physical memory card first.")
             return
@@ -1243,6 +1356,7 @@ class Ps2MemoryCardGUI:
                         virtual_reader.close()
                     self.current_reader.clear_superblock_cache()
                     
+            self.set_busy(True)
             threading.Thread(target=load_thread, daemon=True).start()
             
         except Exception as e:
@@ -1257,6 +1371,7 @@ class Ps2MemoryCardGUI:
 
     def on_dump_success(self, file_path):
         """Handle successful dump completion"""
+        self.set_busy(False)
         self.status_var.set(f"Dump completed: {os.path.basename(file_path)}")
         
         # Hide progress bar
@@ -1269,6 +1384,7 @@ class Ps2MemoryCardGUI:
 
     def on_dump_error(self, error_msg):
         """Handle dump error"""
+        self.set_busy(False)
         self.status_var.set(f"Dump failed: {error_msg}")
         
         # Hide progress bar
@@ -1278,6 +1394,7 @@ class Ps2MemoryCardGUI:
 
     def on_load_success(self, file_path):
         """Handle successful load completion"""
+        self.set_busy(False)
         self.status_var.set(f"Load completed: {os.path.basename(file_path)}")
         
         # Hide progress bar
@@ -1295,6 +1412,7 @@ class Ps2MemoryCardGUI:
 
     def on_load_error(self, error_msg):
         """Handle load error"""
+        self.set_busy(False)
         self.status_var.set(f"Load failed: {error_msg}")
         
         # Hide progress bar
@@ -1304,6 +1422,8 @@ class Ps2MemoryCardGUI:
 
     def erase_physical_card(self):
         """Erase all content from the physical memory card"""
+        if self.busy:
+            return
         if not self.current_reader or not self.is_physical:
             messagebox.showerror("Error", "No physical memory card connected")
             return
@@ -1345,6 +1465,7 @@ class Ps2MemoryCardGUI:
                 error_msg = str(e)
                 self.root.after(0, lambda: self.on_erase_error(error_msg))
                 
+        self.set_busy(True)
         threading.Thread(target=erase_thread, daemon=True).start()
 
     def update_erase_progress(self, percentage, current, total):
@@ -1355,6 +1476,7 @@ class Ps2MemoryCardGUI:
 
     def on_erase_success(self):
         """Handle successful erase completion"""
+        self.set_busy(False)
         self.status_var.set("Erase completed")
         
         # Hide progress bar
@@ -1376,6 +1498,7 @@ class Ps2MemoryCardGUI:
 
     def on_erase_error(self, error_msg):
         """Handle erase error"""
+        self.set_busy(False)
         self.status_var.set(f"Erase failed: {error_msg}")
         
         # Hide progress bar
