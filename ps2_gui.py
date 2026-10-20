@@ -14,7 +14,7 @@ import native_dialogs
 import ps2_format
 import ps2_saves
 from ps2_card_writer import NotEnoughSpaceError, SaveExistsError
-from ps2_physical_writer import PhysicalCardSession, PhysicalWriteError
+from ps2_physical_writer import PhysicalCardSession, PhysicalWriteError, format_card
 from memory_card_reader import PhysicalPs2MemoryCardReader, VirtualPs2MemoryCardReader, PARENT_DIRECTORY_LABEL
 
 class Ps2MemoryCardGUI:
@@ -850,7 +850,7 @@ class Ps2MemoryCardGUI:
         """Rebuild the tools menu for the current card"""
         self.tools_menu.delete(0, tk.END)
         self.tools_menu.add_command(label="Card Information", command=self.show_card_info_popup)
-        if self.current_reader and not self.is_physical and self.current_reader.supports_writing():
+        if self.can_modify_card():
             self.tools_menu.add_command(label="Format Card...", command=self.format_card)
         
         # Physical card tools
@@ -888,14 +888,30 @@ class Ps2MemoryCardGUI:
         self.status_var.set(f"Created {os.path.basename(path)}")
         
     def format_card(self):
-        """Erase everything on the open .ps2 file and format it again"""
-        if self.busy or not self.current_reader or self.is_physical or not self.current_reader.supports_writing():
+        """Erase everything on the card and format it again"""
+        if self.busy or not self.can_modify_card():
             return
-        name = os.path.basename(self.current_file_path)
+        name = "the physical card" if self.is_physical else os.path.basename(self.current_file_path)
         if not messagebox.askyesno("Format Card",
                                    f"Format {name}?\n\n"
                                    "Every save on it will be erased. This cannot be undone."):
             return
+        
+        if self.is_physical:
+            def finished(error):
+                if error is not None:
+                    self.show_change_error("Format Failed", error)
+                self.refresh_card()
+                if error is None:
+                    self.status_var.set("Formatted the physical card")
+            
+            self.status_var.set("Formatting the card...")
+            self.run_in_background(
+                lambda report: format_card(self.current_reader,
+                                           lambda done, total: report("Formatting the card", done, total)),
+                finished)
+            return
+        
         try:
             self.current_reader.replace_image(ps2_format.format_image())
         except OSError as e:

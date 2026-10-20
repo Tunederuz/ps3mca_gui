@@ -11,7 +11,9 @@ and compared.
 
 import time
 
+import ps2_format
 from memory_card_reader import Ps2MemoryCardReader
+from ps2_ecc import page_ecc
 
 WRITE_ATTEMPTS = 2
 
@@ -37,12 +39,12 @@ def erase_block(device, first_page):
     last_page = first_page + specs['blocksize'] - 1
 
     def is_erased(page):
-        data, ecc = device.read_page(page)
+        data, ecc = device.read_raw_page(page)
         return bytes(data) + bytes(ecc)[:specs['eccsize']] == erased
 
     def wait_until_erased(pages):
         try:
-            device.read_page(first_page)
+            device.read_raw_page(first_page)
         except ValueError:
             # The throwaway read may come back garbled, it only has to happen
             pass
@@ -82,13 +84,46 @@ def rewrite_block(device, block, new):
 
         mismatch = None
         for i, page in enumerate(pages):
-            data, ecc = device.read_page(first_page + i)
+            data, ecc = device.read_raw_page(first_page + i)
             if bytes(data) != page[:page_size] or (ecc_size and bytes(ecc) != page[page_size:]):
                 mismatch = first_page + i
                 break
         if mismatch is None:
             return
     raise PhysicalWriteError(f"Page {mismatch} did not read back as written")
+
+
+def format_card(device, progress=None):
+    """
+    Format a standard 8 MB card. Block 0 is erased first and gets the new
+    superblock last, so an interrupted format leaves a card that clearly reads
+    as unformatted instead of one pointing at a half erased FAT.
+    """
+    specs = device.get_card_specs()
+    if (specs['cardsize'], specs['blocksize'], specs['pagesize'], specs['eccsize']) != (
+            ps2_format.PAGES_PER_CARD, ps2_format.PAGES_PER_BLOCK, ps2_format.PAGE_SIZE, ps2_format.ECC_SIZE):
+        raise PhysicalWriteError("Only standard 8 MB memory cards can be formatted")
+
+    pages = ps2_format.formatted_pages()
+    stride = specs['pagesize'] + specs['eccsize']
+    erased = bytes([specs['erased_byte']]) * stride
+    block_count = specs['cardsize'] // specs['blocksize']
+
+    def block_content(block):
+        first = block * specs['blocksize']
+        return b''.join(pages[page] + page_ecc(pages[page]) if page in pages else erased
+                        for page in range(first, first + specs['blocksize']))
+
+    erase_block(device, 0)
+    for done, block in enumerate(list(range(1, block_count)) + [0]):
+        content = block_content(block)
+        if content == erased * specs['blocksize']:
+            erase_block(device, block * specs['blocksize'])
+        else:
+            rewrite_block(device, block, content)
+        if progress:
+            progress(done + 1, block_count)
+    device.clear_superblock_cache()
 
 
 class PhysicalCardSession(Ps2MemoryCardReader):
