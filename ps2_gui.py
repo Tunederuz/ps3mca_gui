@@ -786,24 +786,24 @@ class Ps2MemoryCardGUI:
                         for page_num in range(total_pages):
                             try:
                                 cluster_data, ecc = self.current_reader.read_page(page_num)
-                                
-                                # Write page data
-                                f.write(bytes(cluster_data) + bytes(ecc))
-                                
-                                # Update progress bar
-                                progress = ((page_num + 1) / total_pages) * 100
-                                self.root.after(0, lambda p=progress: self.update_progress("Dumping memory card", p, page_num + 1, total_pages))
-                                    
                             except Exception as e:
-                                print(f"Error reading page {page_num}: {e}")
-                                # Continue with next page
-                                continue
-                    
+                                raise IOError(f"Failed to read page {page_num}: {e}") from e
+
+                            # Write page data
+                            f.write(bytes(cluster_data) + bytes(ecc))
+
+                            # Update progress bar
+                            progress = ((page_num + 1) / total_pages) * 100
+                            self.root.after(0, lambda p=progress, c=page_num+1, t=total_pages:
+                                          self.update_progress("Dumping memory card", p, c, t))
+
                     # Success message
                     self.root.after(0, lambda: self.on_dump_success(file_path))
-                    
+
                 except Exception as e:
-                    error_msg = str(e)
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    error_msg = f"{e}\n\nThe incomplete dump file was deleted."
                     self.root.after(0, lambda: self.on_dump_error(error_msg))
                     
             threading.Thread(target=dump_thread, daemon=True).start()
@@ -841,11 +841,11 @@ class Ps2MemoryCardGUI:
             
             # Run load in background thread
             def load_thread():
+                virtual_reader = VirtualPs2MemoryCardReader(file_path)
+                card_modified = False
                 try:
-                    # Create virtual reader for source file
-                    virtual_reader = VirtualPs2MemoryCardReader(file_path)
                     virtual_reader.open()
-                    
+
                     # Get card specifications from both readers
                     physical_specs = self.current_reader.get_card_specs()
 
@@ -861,6 +861,7 @@ class Ps2MemoryCardGUI:
                     total_pages = virtual_specs['cardsize']
 
                     print("Erasing physical card")
+                    card_modified = True
                     self.current_reader.erase_all()
 
                     sleep(5)
@@ -869,31 +870,28 @@ class Ps2MemoryCardGUI:
                     # Load all pages
                     for page_num in range(total_pages):
                         try:
-                            # Read page from virtual file
                             cluster_data, ecc = virtual_reader.read_page(page_num)
-                            
-                            # Write page to physical card
                             self.current_reader.write_page(page_num, cluster_data, ecc)
-                            
-                            # Update progress bar
-                            progress = ((page_num + 1) / total_pages) * 100
-                            self.root.after(0, lambda p=progress, c=page_num+1, t=total_pages: 
-                                          self.update_progress("Importing file to physical card", p, c, t))
-                                
                         except Exception as e:
-                            print(f"Error processing page {page_num}: {e}")
-                            # Continue with next page
-                            continue
-                    
-                    # Close virtual reader
-                    virtual_reader.close()
-                    
+                            raise IOError(f"Failed to write page {page_num}: {e}") from e
+
+                        # Update progress bar
+                        progress = ((page_num + 1) / total_pages) * 100
+                        self.root.after(0, lambda p=progress, c=page_num+1, t=total_pages:
+                                      self.update_progress("Importing file to physical card", p, c, t))
+
                     # Success message
                     self.root.after(0, lambda: self.on_load_success(file_path))
-                    
+
                 except Exception as e:
                     error_msg = str(e)
+                    if card_modified:
+                        error_msg += "\n\nThe memory card is only partially written. Load the file again or erase the card."
                     self.root.after(0, lambda: self.on_load_error(error_msg))
+                finally:
+                    if virtual_reader.memory_card_file is not None:
+                        virtual_reader.close()
+                    self.current_reader.clear_superblock_cache()
                     
             threading.Thread(target=load_thread, daemon=True).start()
             
@@ -1007,10 +1005,14 @@ class Ps2MemoryCardGUI:
         # Hide progress bar
         self.progress_frame.pack_forget()
         
-        # Reload card info and directory
-        self.load_card_info()
-        self.load_directory_listing()
-        
+        self.current_reader.clear_superblock_cache()
+        for item in self.dir_tree.get_children():
+            self.dir_tree.delete(item)
+        self.tree_item_data.clear()
+        self.navigation_stack.clear()
+        self.current_directory = None
+        self.current_dir_label.config(text="📁 Current Directory: (card erased)")
+
         # Show success message
         messagebox.showinfo("Erase Complete", "Memory card has been completely erased!")
 

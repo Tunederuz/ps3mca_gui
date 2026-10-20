@@ -71,6 +71,9 @@ class Ps2MemoryCardReader(ABC):
         """
         pass
 
+    def clear_superblock_cache(self) -> None:
+        self.superblock_cache = None
+
     def get_superblock_info(self) -> dict:
         """
         Gets the superblock from the memory card.
