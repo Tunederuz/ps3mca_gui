@@ -6,10 +6,11 @@ A modern interface for reading both physical and virtual PS2 memory cards
 
 from time import sleep
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import threading
 import os
-from memory_card_reader import PhysicalPs2MemoryCardReader, VirtualPs2MemoryCardReader
+from memory_card_reader import PhysicalPs2MemoryCardReader, VirtualPs2MemoryCardReader, PARENT_DIRECTORY_LABEL
 
 class Ps2MemoryCardGUI:
     def __init__(self, root):
@@ -35,29 +36,54 @@ class Ps2MemoryCardGUI:
             'hover': '#333333',                # Hover states
             'selected': '#0066cc',             # PS2 blue selection
             'ps2_gradient_start': '#001122',   # PS2 gradient start
-            'ps2_gradient_end': '#003366'      # PS2 gradient end
+            'ps2_gradient_end': '#003366',     # PS2 gradient end
+            'row_alt': '#242424',              # Alternate row background
+            'type_dir': '#8cc4ff',             # Directory rows
+            'type_ps1': '#ffb070',             # PS1 save rows
+            'type_pocketstation': '#c9a0ff'    # PocketStation rows
         }
-        
+
         self.root.title("PS2 Memory Card Manager")
         self.root.geometry("1200x800")
         self.root.configure(bg=self.colors['bg_primary'])
         self.root.minsize(1000, 700)
-        
+
+        # Segoe UI and Consolas only exist on Windows, fall back to common Linux fonts
+        families = set(tkfont.families(self.root))
+        self.ui_font = next((f for f in ('Segoe UI', 'Inter', 'Cantarell', 'Noto Sans', 'DejaVu Sans')
+                             if f in families), 'Helvetica')
+        self.mono_font = next((f for f in ('Consolas', 'JetBrains Mono', 'DejaVu Sans Mono', 'Liberation Mono')
+                               if f in families), 'Courier')
+
         # Enhanced style configuration
         self.style = ttk.Style()
         self.style.theme_use('clam')
-        
+
+        # Dark scrollbar instead of the light grey clam default
+        self.style.configure('PS2.Vertical.TScrollbar',
+                           background=self.colors['bg_elevated'],
+                           troughcolor=self.colors['bg_secondary'],
+                           bordercolor=self.colors['bg_secondary'],
+                           lightcolor=self.colors['bg_elevated'],
+                           darkcolor=self.colors['bg_elevated'],
+                           arrowcolor=self.colors['text_muted'],
+                           gripcount=0)
+        self.style.map('PS2.Vertical.TScrollbar',
+                      background=[('pressed', self.colors['accent_blue_bright']),
+                                  ('active', self.colors['accent_blue'])],
+                      arrowcolor=[('active', self.colors['text_primary'])])
+
         # Configure sleek dark theme styles
         self.style.configure('Title.TLabel', 
-                           font=('Segoe UI', 22, 'bold'), 
+                           font=(self.ui_font, 22, 'bold'), 
                            foreground=self.colors['text_primary'],
                            background=self.colors['bg_primary'])
         self.style.configure('Header.TLabel', 
-                           font=('Segoe UI', 12, 'bold'), 
+                           font=(self.ui_font, 12, 'bold'), 
                            foreground=self.colors['text_primary'],
                            background=self.colors['bg_secondary'])
         self.style.configure('Info.TLabel', 
-                           font=('Segoe UI', 10), 
+                           font=(self.ui_font, 10), 
                            foreground=self.colors['text_secondary'],
                            background=self.colors['bg_secondary'])
         
@@ -117,46 +143,78 @@ class Ps2MemoryCardGUI:
         
     def setup_ui(self):
         """Setup the main UI components"""
-        # Main frame with sleek styling
-        main_frame = tk.Frame(self.root, bg=self.colors['bg_primary'])
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        # Panels are packed straight into a canvas so its gradient shows between them
+        self.bg_canvas = tk.Canvas(self.root, bg=self.colors['bg_primary'],
+                                   highlightthickness=0, bd=0)
+        self.bg_canvas.pack(fill=tk.BOTH, expand=True)
         
-        # Title with sleek styling
-        title_frame = tk.Frame(main_frame, bg=self.colors['bg_primary'])
-        title_frame.pack(fill=tk.X, pady=(0, 25))
-        
-        title_label = tk.Label(title_frame, text="PS2 Memory Card Manager", 
-                              font=('Segoe UI', 28, 'bold'), 
-                              bg=self.colors['bg_primary'], 
-                              fg=self.colors['text_primary'])
-        title_label.pack()
-        
-        subtitle_label = tk.Label(title_frame, text="PlayStation 2 Memory Card Management Tool", 
-                                 font=('Segoe UI', 12), 
-                                 bg=self.colors['bg_primary'], 
-                                 fg=self.colors['text_accent'])
-        subtitle_label.pack(pady=(8, 0))
+        # Compact header drawn on the canvas: title on the left, connection on the right
+        self.bg_canvas.create_text(24, 34, anchor=tk.W, text="PS2 Memory Card Manager",
+                                   font=(self.ui_font, 18, 'bold'),
+                                   fill=self.colors['text_primary'], tags='header')
+        self.connection_text = self.bg_canvas.create_text(0, 34, anchor=tk.E, text="",
+                                                          font=(self.ui_font, 11, 'bold'),
+                                                          tags='header')
+        self.bg_canvas.bind('<Configure>', self.draw_background)
         
         # Directory listing frame (with integrated navigation)
-        self.setup_directory_frame(main_frame)
+        self.setup_directory_frame(self.bg_canvas)
         
         # Progress bar frame
-        self.setup_progress_frame(main_frame)
+        self.setup_progress_frame(self.bg_canvas)
         
         # Status bar
-        self.setup_status_bar(main_frame)
+        self.setup_status_bar(self.bg_canvas)
+        
+        self.update_connection_badge()
+        
+    @staticmethod
+    def blend_colors(start, end, ratio):
+        """Linear blend between two #rrggbb colors"""
+        a = [int(start[i:i + 2], 16) for i in (1, 3, 5)]
+        b = [int(end[i:i + 2], 16) for i in (1, 3, 5)]
+        return '#' + ''.join(f"{round(x + (y - x) * ratio):02x}" for x, y in zip(a, b))
+        
+    def draw_background(self, event):
+        """Redraw the PS2 browser style gradient to fit the window"""
+        canvas = self.bg_canvas
+        canvas.delete('gradient')
+        top = self.colors['ps2_gradient_end']
+        middle = self.colors['ps2_gradient_start']
+        bottom = self.colors['bg_primary']
+        band = 4
+        for y in range(0, event.height, band):
+            ratio = y / max(event.height - 1, 1)
+            if ratio < 0.5:
+                color = self.blend_colors(top, middle, ratio * 2)
+            else:
+                color = self.blend_colors(middle, bottom, (ratio - 0.5) * 2)
+            canvas.create_rectangle(0, y, event.width, y + band, fill=color, outline='',
+                                    tags='gradient')
+        canvas.tag_lower('gradient')
+        canvas.coords(self.connection_text, event.width - 24, 34)
+        
+    def update_connection_badge(self):
+        """Show what is currently loaded in the header"""
+        if not self.current_reader:
+            text, color = "No memory card loaded", self.colors['text_muted']
+        elif self.is_physical:
+            text, color = "Physical card  ·  PS3 Memory Card Adaptor", self.colors['accent_green']
+        else:
+            text = f"Virtual card  ·  {os.path.basename(self.current_file_path or '')}"
+            color = self.colors['accent_green']
+        self.bg_canvas.itemconfig(self.connection_text, text=text, fill=color)
         
     def setup_progress_frame(self, parent):
         """Setup the progress bar frame"""
         # Progress bar (initially hidden)
-        self.progress_frame = tk.Frame(parent, bg=self.colors['bg_primary'])
-        self.progress_frame.pack(fill=tk.X, padx=20, pady=(0, 15))
-        self.progress_frame.pack_forget()  # Initially hidden
+        self.progress_frame = tk.Frame(parent, bg=self.colors['bg_secondary'],
+                                       padx=20, pady=12)
         
         self.progress_label = tk.Label(self.progress_frame, text="Dumping memory card...", 
-                                      bg=self.colors['bg_primary'], 
+                                      bg=self.colors['bg_secondary'], 
                                       fg=self.colors['text_primary'], 
-                                      font=('Segoe UI', 10))
+                                      font=(self.ui_font, 10))
         self.progress_label.pack(anchor=tk.W)
         
         self.progress_bar = ttk.Progressbar(self.progress_frame, 
@@ -165,43 +223,48 @@ class Ps2MemoryCardGUI:
                                           style='PS2.Horizontal.TProgressbar')
         self.progress_bar.pack(fill=tk.X, pady=(8, 0))
         
+    def show_progress(self):
+        """Show the progress bar below the directory listing"""
+        self.progress_frame.pack(fill=tk.X, padx=24, pady=(0, 12))
+        
     def setup_directory_frame(self, parent):
         """Setup the directory listing frame with integrated navigation"""
-        dir_frame = tk.LabelFrame(parent, text="Directory Contents", 
-                                 bg=self.colors['bg_secondary'], 
-                                 fg=self.colors['text_primary'],
-                                 font=('Segoe UI', 13, 'bold'),
-                                 relief=tk.FLAT,
-                                 bd=2,
-                                 highlightbackground=self.colors['border_accent'],
-                                 highlightthickness=2)
-        dir_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+        dir_frame = tk.Frame(parent, bg=self.colors['bg_secondary'],
+                             highlightbackground=self.colors['border_accent'],
+                             highlightthickness=1)
+        dir_frame.pack(fill=tk.BOTH, expand=True, padx=24, pady=(68, 12))
         
         # Navigation controls frame
         nav_controls = tk.Frame(dir_frame, bg=self.colors['bg_secondary'])
-        nav_controls.pack(fill=tk.X, padx=20, pady=(15, 10))
+        nav_controls.pack(fill=tk.X, padx=16, pady=(14, 10))
         
         # Back button
         self.back_btn = tk.Button(nav_controls, text="Back", command=self.navigate_back,
                                  bg=self.colors['accent_blue'], 
                                  fg=self.colors['text_primary'], 
-                                 font=('Segoe UI', 11, 'bold'),
+                                 font=(self.ui_font, 10, 'bold'),
                                  relief=tk.FLAT, 
-                                 padx=20, 
-                                 pady=6,
+                                 bd=0,
+                                 highlightthickness=0,
+                                 padx=16, 
+                                 pady=5,
+                                 cursor='hand2',
                                  activebackground=self.colors['accent_blue_bright'],
-                                 activeforeground=self.colors['text_primary'])
-        self.back_btn.pack(side=tk.LEFT, padx=(0, 18))
+                                 activeforeground=self.colors['text_primary'],
+                                 disabledforeground=self.colors['text_disabled'])
+        self.back_btn.pack(side=tk.LEFT, padx=(0, 14))
         
-        # Current directory label
-        self.current_dir_label = tk.Label(nav_controls, text="Current Directory: /", 
+        # Breadcrumb of the current path
+        self.current_dir_label = tk.Label(nav_controls, text="/", 
                                          bg=self.colors['bg_secondary'], 
                                          fg=self.colors['text_accent'], 
-                                         font=('Segoe UI', 11, 'bold'))
+                                         font=(self.ui_font, 11, 'bold'))
         self.current_dir_label.pack(side=tk.LEFT)
         
-        # Directory tree with custom styling (reduced height)
-        self.dir_tree = ttk.Treeview(dir_frame, columns=('Type', 'Size', 'Created', 'Modified'), 
+        tree_container = tk.Frame(dir_frame, bg=self.colors['bg_secondary'])
+        tree_container.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 16))
+        
+        self.dir_tree = ttk.Treeview(tree_container, columns=('Type', 'Size', 'Created', 'Modified'), 
                                     show='tree headings', height=10)
         
         # Configure PS2 treeview styling
@@ -209,43 +272,90 @@ class Ps2MemoryCardGUI:
                            background=self.colors['bg_tertiary'],
                            foreground=self.colors['text_primary'],
                            fieldbackground=self.colors['bg_tertiary'],
-                           font=('Segoe UI', 10))
+                           bordercolor=self.colors['bg_secondary'],
+                           borderwidth=0,
+                           rowheight=28,
+                           font=(self.ui_font, 10))
         self.style.configure('Treeview.Heading',
-                           background=self.colors['bg_secondary'],
+                           background=self.colors['bg_elevated'],
                            foreground=self.colors['text_accent'],
-                           font=('Segoe UI', 11, 'bold'))
+                           bordercolor=self.colors['bg_secondary'],
+                           lightcolor=self.colors['bg_elevated'],
+                           darkcolor=self.colors['bg_elevated'],
+                           relief=tk.FLAT,
+                           padding=(8, 6),
+                           font=(self.ui_font, 10, 'bold'))
+        # Drop the clam field border, which draws a light frame around the tree
+        self.style.layout('Treeview', [('Treeview.treearea', {'sticky': 'nswe'})])
+        self.style.map('Treeview.Heading',
+                      background=[('active', self.colors['border'])])
         self.style.map('Treeview',
                       background=[('selected', self.colors['accent_blue'])],
                       foreground=[('selected', self.colors['text_primary'])])
         
-        # Configure columns
-        self.dir_tree.heading('#0', text='Name')
-        self.dir_tree.heading('Type', text='Type')
-        self.dir_tree.heading('Size', text='Size')
-        self.dir_tree.heading('Created', text='Created')
-        self.dir_tree.heading('Modified', text='Modified')
+        # Zebra rows and per-type text colors
+        self.dir_tree.tag_configure('odd', background=self.colors['row_alt'])
+        self.dir_tree.tag_configure('dir', foreground=self.colors['type_dir'])
+        self.dir_tree.tag_configure('ps1', foreground=self.colors['type_ps1'])
+        self.dir_tree.tag_configure('pocketstation', foreground=self.colors['type_pocketstation'])
+        self.dir_tree.tag_configure('parent', foreground=self.colors['text_muted'])
         
-        self.dir_tree.column('#0', width=200)
-        self.dir_tree.column('Type', width=80)
-        self.dir_tree.column('Size', width=100)
-        self.dir_tree.column('Created', width=150)
-        self.dir_tree.column('Modified', width=150)
+        # Configure columns
+        self.dir_tree.heading('#0', text='Name', anchor=tk.W)
+        self.dir_tree.heading('Type', text='Type', anchor=tk.CENTER)
+        self.dir_tree.heading('Size', text='Size', anchor=tk.E)
+        self.dir_tree.heading('Created', text='Created', anchor=tk.CENTER)
+        self.dir_tree.heading('Modified', text='Modified', anchor=tk.CENTER)
+        
+        self.dir_tree.column('#0', width=280)
+        self.dir_tree.column('Type', width=80, anchor=tk.CENTER, stretch=False)
+        self.dir_tree.column('Size', width=110, anchor=tk.E, stretch=False)
+        self.dir_tree.column('Created', width=170, anchor=tk.CENTER)
+        self.dir_tree.column('Modified', width=170, anchor=tk.CENTER)
         
         # Scrollbar
-        dir_scrollbar = ttk.Scrollbar(dir_frame, orient=tk.VERTICAL, command=self.dir_tree.yview)
+        dir_scrollbar = ttk.Scrollbar(tree_container, orient=tk.VERTICAL, command=self.dir_tree.yview,
+                                      style='PS2.Vertical.TScrollbar')
         self.dir_tree.configure(yscrollcommand=dir_scrollbar.set)
         
-        self.dir_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(20, 0), pady=12)
-        dir_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=12)
+        self.dir_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        dir_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Initially empty (no items to show)
+        # Hint shown over the tree when there is nothing to list
+        self.empty_label = tk.Label(self.dir_tree, bg=self.colors['bg_tertiary'],
+                                    fg=self.colors['text_muted'], font=(self.ui_font, 11),
+                                    justify=tk.CENTER)
         
-        # Bind double-click event for folder navigation
+        # Open folders/files with double-click or Enter, go back with Backspace
         self.dir_tree.bind('<Double-1>', self.on_tree_double_click)
+        self.dir_tree.bind('<Return>', self.on_tree_double_click)
+        self.dir_tree.bind('<BackSpace>', lambda event: self.navigate_back())
         
         # Navigation state variables
         self.navigation_stack = []
+        self.path_names = []
         self.current_directory = None
+        
+        self.update_navigation_state()
+        
+    def update_navigation_state(self):
+        """Refresh the breadcrumb, the Back button and the empty hint"""
+        self.current_dir_label.config(text="/  " + "  /  ".join(self.path_names) if self.path_names else "/")
+        
+        if self.navigation_stack:
+            self.back_btn.config(state=tk.NORMAL, bg=self.colors['accent_blue'])
+        else:
+            self.back_btn.config(state=tk.DISABLED, bg=self.colors['bg_elevated'])
+        
+        if self.dir_tree.get_children():
+            self.empty_label.place_forget()
+        else:
+            if self.current_reader:
+                self.empty_label.config(text="This folder is empty")
+            else:
+                self.empty_label.config(text="No memory card loaded\n\n"
+                                             "Open a .ps2 file or connect a physical card from the File menu")
+            self.empty_label.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
         
     def setup_status_bar(self, parent):
         """Setup the status bar"""
@@ -255,10 +365,11 @@ class Ps2MemoryCardGUI:
                              anchor=tk.W, 
                              bg=self.colors['bg_secondary'], 
                              fg=self.colors['text_secondary'],
-                             font=('Segoe UI', 11),
-                             padx=20,
-                             pady=10)
-        status_bar.pack(side=tk.BOTTOM, fill=tk.X, pady=(15, 0))
+                             font=(self.ui_font, 10),
+                             padx=16,
+                             pady=8)
+        status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=24, pady=(0, 20))
+        
         
     def show_card_info_popup(self):
         """Show card information in a popup window"""
@@ -283,7 +394,7 @@ class Ps2MemoryCardGUI:
         
         # Title
         title_label = tk.Label(main_frame, text="PlayStation 2 Memory Card Information", 
-                              font=('Segoe UI', 20, 'bold'), 
+                              font=(self.ui_font, 20, 'bold'), 
                               bg=self.colors['bg_primary'], 
                               fg=self.colors['text_primary'])
         title_label.pack(pady=(0, 20))
@@ -292,7 +403,7 @@ class Ps2MemoryCardGUI:
         card_info_text = scrolledtext.ScrolledText(main_frame, 
                                                   bg=self.colors['bg_tertiary'], 
                                                   fg=self.colors['text_primary'],
-                                                  font=('Consolas', 10),
+                                                  font=(self.mono_font, 10),
                                                   relief=tk.FLAT,
                                                   bd=1,
                                                   insertbackground=self.colors['text_primary'],
@@ -338,7 +449,7 @@ STRUCTURE
         close_btn = tk.Button(main_frame, text="Close", command=popup.destroy,
                              bg=self.colors['accent_blue'], 
                              fg=self.colors['text_primary'], 
-                             font=('Segoe UI', 12, 'bold'),
+                             font=(self.ui_font, 12, 'bold'),
                              relief=tk.FLAT, 
                              padx=35, 
                              pady=10,
@@ -505,6 +616,7 @@ STRUCTURE
         # Update menu state
         self.update_menu_state()
         self.update_tools_menu_state()
+        self.update_connection_badge()
         
         self.status_var.set("Ready")
         
@@ -533,6 +645,12 @@ STRUCTURE
         
         # Clear the hidden data dictionary
         self.tree_item_data.clear()
+        
+        self.navigation_stack = []
+        self.path_names = []
+        self.current_directory = None
+        self.update_navigation_state()
+        self.update_connection_badge()
             
         # Update menu state
         self.update_menu_state()
@@ -543,56 +661,16 @@ STRUCTURE
     def load_directory_listing(self):
         """Load and display directory listing"""
         try:
-            # Clear existing items
-            for item in self.dir_tree.get_children():
-                self.dir_tree.delete(item)
-            
-            # Clear the hidden data dictionary
-            self.tree_item_data.clear()
-                
             # Get root directory cluster
             root_cluster = self.current_reader.get_root_directory_cluster()
             
             # Get directory entries
             entries = self.current_reader.get_directory_content(root_cluster)
             
-            # Sort entries by name in ascending order
-            entries = sorted(entries, key=lambda x: x['name'].lower() if x and x['name'] else '')
-            
-            # Populate tree
-            for entry in entries:
-                if entry:  # Skip None entries
-                    # Type icon
-                    if entry['is_dir']:
-                        type_text = "DIR"
-                        #if entry['is_hidden']:
-                        #    type_text = f"{type_text} [HIDDEN]"
-                    elif entry['is_ps1']:
-                        type_text = "PS1"
-                    elif entry['is_pocketstation']:
-                        type_text = "PS"
-                    else:
-                        type_text = "FILE"
-                    
-                    # Size formatting
-                    if entry['is_dir']:
-                        size_str = "<DIR>"
-                    else:
-                        size_str = f"{entry['length']:,}"
-                    
-                    # Name with hidden indicator
-                    name = entry['name']
-                    
-                    # Insert into tree
-                    item = self.dir_tree.insert('', 'end', text=name, 
-                                              values=(type_text, size_str, entry['created'], entry['modified']))
-                    
-                    # Store additional hidden data in dictionary
-                    self.tree_item_data[item] = entry  # Store the entire entry dict
-                    
-            # Update current directory label
+            self.navigation_stack = []
+            self.path_names = []
             self.current_directory = root_cluster
-            self.current_dir_label.config(text=f"Current Directory: Cluster {root_cluster}")
+            self.populate_directory_tree(entries)
             
         except Exception as e:
             messagebox.showerror("Directory Error", f"Failed to load directory: {str(e)}")
@@ -614,13 +692,18 @@ STRUCTURE
         if not entry_data:
             return
             
+        # The parent pointer goes back up instead of pushing a new level
+        if entry_data['name'] == PARENT_DIRECTORY_LABEL:
+            self.navigate_back()
+            return
+            
         # Check if it's a directory
         if item_values[0] == "DIR":
             # Get the cluster number from the values
             cluster_num = entry_data['cluster']  # Cluster column
             
             if cluster_num is not None:
-                self.navigate_to_directory(cluster_num)
+                self.navigate_to_directory(cluster_num, entry_data['name'])
 
         if item_values[0] == "FILE":
             file_cluster = entry_data['cluster']
@@ -640,30 +723,29 @@ STRUCTURE
                     f.write(file_data)
                 messagebox.showinfo("File Saved", f"File saved to {file_path}")
     
-    def navigate_to_directory(self, cluster_num):
+    def navigate_to_directory(self, cluster_num, name):
         """Navigate to a specific directory cluster"""
         if not self.current_reader:
             messagebox.showwarning("Not Connected", "Please connect to a memory card first.")
             return
             
         try:
-            # Store current directory in navigation stack
-            if self.current_directory is not None:
-                self.navigation_stack.append(self.current_directory)
-            
             # Navigate to the new directory using existing method
             entries = self.current_reader.get_directory_content(cluster_num)
             
             if entries:
+                # Store current directory in navigation stack
+                if self.current_directory is not None:
+                    self.navigation_stack.append(self.current_directory)
+                self.path_names.append(name)
+                
                 # Update current directory
                 self.current_directory = cluster_num
                 
                 # Clear and repopulate the tree
                 self.populate_directory_tree(entries)
                 
-                # Update status and current directory label
-                self.status_var.set(f"Navigated to directory cluster {cluster_num}")
-                self.current_dir_label.config(text=f"Current Directory: Cluster {cluster_num}")
+                self.status_var.set(f"Opened {name}")
             else:
                 messagebox.showinfo("Empty Directory", f"Directory cluster {cluster_num} is empty or could not be read.")
                 
@@ -677,28 +759,36 @@ STRUCTURE
             return
             
         try:
-            # Get previous directory from stack
-            previous_cluster = self.navigation_stack.pop()
-            
             # Navigate back using existing method
+            previous_cluster = self.navigation_stack[-1]
             entries = self.current_reader.get_directory_content(previous_cluster)
             
             if entries:
+                self.navigation_stack.pop()
+                self.path_names.pop()
+                
                 # Update current directory
                 self.current_directory = previous_cluster
                 
                 # Clear and repopulate the tree
                 self.populate_directory_tree(entries)
                 
-                # Update status and current directory label
-                self.status_var.set(f"Navigated back to cluster {previous_cluster}")
-                self.current_dir_label.config(text=f"Current Directory: Cluster {previous_cluster}")
+                self.status_var.set("Back to /" + "/".join(self.path_names))
             else:
                 messagebox.showinfo("Navigation Error", f"Could not navigate back to cluster {previous_cluster}")
                 
         except Exception as e:
             messagebox.showerror("Navigation Error", f"Failed to navigate back: {str(e)}")
             self.status_var.set(f"Navigation failed: {str(e)}")
+            
+    @staticmethod
+    def format_size(length):
+        """Human readable file size"""
+        if length < 1024:
+            return f"{length} B"
+        if length < 1024 * 1024:
+            return f"{length / 1024:.1f} KB"
+        return f"{length / (1024 * 1024):.2f} MB"
     
     def populate_directory_tree(self, entries):
         """Populate the directory tree with entries"""
@@ -709,39 +799,41 @@ STRUCTURE
         # Clear the hidden data dictionary
         self.tree_item_data.clear()
         
-        # Sort entries by name in ascending order
-        entries = sorted(entries, key=lambda x: x['name'].lower() if x and x['name'] else '')
+        # Parent pointer first, then entries by name in ascending order
+        entries = sorted((entry for entry in entries if entry),
+                         key=lambda x: (x['name'] != PARENT_DIRECTORY_LABEL, (x['name'] or '').lower()))
         
         # Populate tree with new entries
-        for entry in entries:
-            if entry:
-                # Type icon and text
-                if entry['is_dir']:
-                    type_text = "DIR"
-                    #if entry['is_hidden']:
-                    #    type_text = f"{type_text} [HIDDEN]"
-                elif entry['is_ps1']:
-                    type_text = "PS1"
-                elif entry['is_pocketstation']:
-                    type_text = "PS"
-                else:
-                    type_text = "FILE"
-                
-                # Size formatting
-                if entry['is_dir']:
-                    size_str = "<DIR>"
-                else:
-                    size_str = f"{entry['length']:,}"
-                
-                # Name
-                name = entry['name']
-                
-                # Insert into tree
-                item = self.dir_tree.insert('', 'end', text=name, 
-                                   values=(type_text, size_str, entry['created'], entry['modified']))
-                
-                # Store additional hidden data in dictionary
-                self.tree_item_data[item] = entry
+        for index, entry in enumerate(entries):
+            # Type text and row color
+            if entry['is_dir']:
+                type_text = "DIR"
+                type_tag = 'parent' if entry['name'] == PARENT_DIRECTORY_LABEL else 'dir'
+                #if entry['is_hidden']:
+                #    type_text = f"{type_text} [HIDDEN]"
+            elif entry['is_ps1']:
+                type_text = "PS1"
+                type_tag = 'ps1'
+            elif entry['is_pocketstation']:
+                type_text = "PS"
+                type_tag = 'pocketstation'
+            else:
+                type_text = "FILE"
+                type_tag = 'file'
+            
+            # Directories already say DIR in the type column
+            size_str = "" if entry['is_dir'] else self.format_size(entry['length'])
+            
+            tags = (type_tag, 'odd') if index % 2 else (type_tag,)
+            
+            # Insert into tree
+            item = self.dir_tree.insert('', 'end', text=entry['name'], tags=tags,
+                               values=(type_text, size_str, entry['created'], entry['modified']))
+            
+            # Store additional hidden data in dictionary
+            self.tree_item_data[item] = entry
+        
+        self.update_navigation_state()
 
     def dump_physical_card(self):
         """Dump the physical memory card to a .ps2 file"""
@@ -763,7 +855,7 @@ STRUCTURE
             self.status_var.set("Starting memory card dump...")
             
             # Show progress bar
-            self.progress_frame.pack(fill=tk.X, padx=20, pady=(0, 15))
+            self.show_progress()
             self.progress_bar['value'] = 0
             
             # Run dump in background thread
@@ -827,7 +919,7 @@ STRUCTURE
             self.status_var.set("Starting memory card load...")
             
             # Show progress bar
-            self.progress_frame.pack(fill=tk.X, padx=20, pady=(0, 15))
+            self.show_progress()
             self.progress_bar['value'] = 0
             self.progress_label.config(text="Loading memory card from file...")
             
@@ -956,7 +1048,7 @@ STRUCTURE
         self.status_var.set("Erasing memory card...")
         
         # Show progress bar
-        self.progress_frame.pack(fill=tk.X, padx=20, pady=(0, 15))
+        self.show_progress()
         self.progress_bar['value'] = 0
         self.progress_label.config(text="Erasing memory card... 0%")
         
@@ -1002,8 +1094,10 @@ STRUCTURE
             self.dir_tree.delete(item)
         self.tree_item_data.clear()
         self.navigation_stack.clear()
+        self.path_names.clear()
         self.current_directory = None
-        self.current_dir_label.config(text="Current Directory: (card erased)")
+        self.update_navigation_state()
+        self.empty_label.config(text="Card erased")
 
         # Show success message
         messagebox.showinfo("Erase Complete", "Memory card has been completely erased!")

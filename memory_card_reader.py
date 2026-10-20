@@ -20,6 +20,7 @@ CF_ERASE_ZEROES = 0x10     # Erased blocks have all bits set to zero
 
 PLACEHOLDER_FOLDER_NAME = '..'
 PARENT_POINTER_FOLDER_NAME = '.'
+PARENT_DIRECTORY_LABEL = '<Parent Directory>'
 
 class Ps2MemoryCardReader(ABC):
     """
@@ -282,7 +283,7 @@ class Ps2MemoryCardReader(ABC):
             if entry['name'] == PARENT_POINTER_FOLDER_NAME:
                 if is_root:
                     continue
-                entry['name'] = '<Parent Directory>'
+                entry['name'] = PARENT_DIRECTORY_LABEL
             entries.append(entry)
         return entries
 
