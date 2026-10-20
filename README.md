@@ -37,3 +37,7 @@ JasonBrownDeveloper - https://github.com/JasonBrownDeveloper/ps3mca - For ps3mca
 # TODO
 * Import `.max` saves (Action Replay Max: `Ps2PowerSave` header, LZARI compressed content)
 * Import `.cbs` saves (CodeBreaker: zlib compressed, RC4 encrypted content)
+* Erase each block once in Erase All and Load instead of once per page (16 times less wear, one erase clears a whole block on the adaptor)
+* Read back and verify the card after a Load, so a badly written card is reported instead of silently corrupted
+* Before a Load, read the target card's bad block list and warn when it is not empty
+* Smart restore: format the target card and import the saves of a dump one by one instead of copying the raw image, so the target's own layout is kept (needs bad block aware formatting, check how the PS2 BIOS / PS2SDK mcman handles bad blocks first)
