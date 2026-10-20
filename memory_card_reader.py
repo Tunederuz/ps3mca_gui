@@ -380,6 +380,16 @@ class VirtualPs2MemoryCardReader(Ps2MemoryCardReader):
 
     def flush(self) -> None:
         self.memory_card_file.flush()
+
+    def replace_image(self, image: bytes) -> None:
+        """
+        Overwrite the whole file with another card image.
+        """
+        self.memory_card_file.seek(0)
+        self.memory_card_file.write(image)
+        self.memory_card_file.truncate()
+        self.memory_card_file.flush()
+        self.clear_superblock_cache()
     
     def close(self) -> None:
         self.memory_card_file.close()

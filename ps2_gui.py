@@ -11,6 +11,7 @@ from tkinter import ttk, messagebox
 import threading
 import os
 import native_dialogs
+import ps2_format
 import ps2_saves
 from ps2_card_writer import NotEnoughSpaceError, SaveExistsError
 from ps2_physical_writer import PhysicalCardSession, PhysicalWriteError
@@ -135,6 +136,7 @@ class Ps2MemoryCardGUI:
                            activebackground=self.colors['accent_blue'],
                            activeforeground=self.colors['text_primary'])
         menubar.add_cascade(label="File", menu=self.file_menu)
+        self.file_menu.add_command(label="New Memory Card File...", command=self.new_memory_card_file)
         self.file_menu.add_separator()
         self.file_menu.add_command(label="Exit", command=self.on_close)
         
@@ -148,7 +150,6 @@ class Ps2MemoryCardGUI:
                             activebackground=self.colors['accent_blue'],
                             activeforeground=self.colors['text_primary'])
         menubar.add_cascade(label="Tools", menu=self.tools_menu)
-        self.tools_menu.add_command(label="Card Information", command=self.show_card_info_popup)
         
         # Initialize tools menu state
         self.update_tools_menu_state()
@@ -846,31 +847,63 @@ class Ps2MemoryCardGUI:
             self.file_menu.insert_command(1, label="Connect to Physical Memory Card", command=self.connect_to_physical_card)
         
     def update_tools_menu_state(self):
-        """Update tools menu items based on connection state"""
-        # Clear existing physical card tools if they exist
-        try:
-            self.tools_menu.delete("Dump to .ps2 File")
-        except:
-            pass
-        try:
-            self.tools_menu.delete("Load from .ps2 File")
-        except:
-            pass
-        try:
-            self.tools_menu.delete("Erase All")
-        except:
-            pass
-        try:
-            self.tools_menu.delete("separator")
-        except:
-            pass
-            
-        # Add physical card tools only if physical card is connected
+        """Rebuild the tools menu for the current card"""
+        self.tools_menu.delete(0, tk.END)
+        self.tools_menu.add_command(label="Card Information", command=self.show_card_info_popup)
+        if self.current_reader and not self.is_physical and self.current_reader.supports_writing():
+            self.tools_menu.add_command(label="Format Card...", command=self.format_card)
+        
+        # Physical card tools
         if self.current_reader and self.is_physical:
             self.tools_menu.add_separator()
             self.tools_menu.add_command(label="Dump to .ps2 File", command=self.dump_physical_card)
             self.tools_menu.add_command(label="Load from .ps2 File", command=self.load_to_physical_card)
             self.tools_menu.add_command(label="Erase All", command=self.erase_physical_card)
+        
+    def new_memory_card_file(self):
+        """Create an empty formatted .ps2 file and open it"""
+        if self.busy:
+            return
+        path = native_dialogs.asksaveasfilename(
+            parent=self.root,
+            title="New Memory Card File",
+            initialfile="Mcd001.ps2",
+            defaultextension=".ps2",
+            filetypes=[("PS2 Memory Card", "*.ps2"), ("All Files", "*.*")]
+        )
+        if not path:
+            return
+        # The file may be the one open right now
+        if self.current_reader:
+            self.disconnect()
+        try:
+            ps2_format.format_file(path)
+        except OSError as e:
+            messagebox.showerror("New Memory Card File", f"Could not create {os.path.basename(path)}:\n{e}")
+            return
+        self.conn_var.set("virtual")
+        self.file_path_var.set(path)
+        self.current_file_path = path
+        self.connect()
+        self.status_var.set(f"Created {os.path.basename(path)}")
+        
+    def format_card(self):
+        """Erase everything on the open .ps2 file and format it again"""
+        if self.busy or not self.current_reader or self.is_physical or not self.current_reader.supports_writing():
+            return
+        name = os.path.basename(self.current_file_path)
+        if not messagebox.askyesno("Format Card",
+                                   f"Format {name}?\n\n"
+                                   "Every save on it will be erased. This cannot be undone."):
+            return
+        try:
+            self.current_reader.replace_image(ps2_format.format_image())
+        except OSError as e:
+            messagebox.showerror("Format Failed", f"Could not format {name}:\n{e}")
+            self.refresh_card()
+            return
+        self.refresh_card()
+        self.status_var.set(f"Formatted {name}")
         
     def load_memory_card_file(self):
         """Load a memory card file from File menu"""
