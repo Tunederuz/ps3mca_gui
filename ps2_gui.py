@@ -11,6 +11,8 @@ from tkinter import ttk, messagebox
 import threading
 import os
 import native_dialogs
+import ps2_saves
+from ps2_card_writer import NotEnoughSpaceError, SaveExistsError
 from memory_card_reader import PhysicalPs2MemoryCardReader, VirtualPs2MemoryCardReader, PARENT_DIRECTORY_LABEL
 
 class Ps2MemoryCardGUI:
@@ -362,12 +364,159 @@ class Ps2MemoryCardGUI:
         self.dir_tree.bind('<Return>', self.on_tree_double_click)
         self.dir_tree.bind('<BackSpace>', lambda event: self.navigate_back())
         
+        # Save actions on right-click, Delete key removes the selected save
+        self.save_menu = tk.Menu(self.root, tearoff=0,
+                                 bg=self.colors['bg_secondary'],
+                                 fg=self.colors['text_primary'],
+                                 activebackground=self.colors['accent_blue'],
+                                 activeforeground=self.colors['text_primary'])
+        self.dir_tree.bind('<Button-3>', self.show_save_menu)
+        self.dir_tree.bind('<Delete>', lambda event: self.delete_selected_save())
+        
         # Navigation state variables
         self.navigation_stack = []
         self.path_names = []
         self.current_directory = None
         
         self.update_navigation_state()
+        
+    def selected_save_name(self):
+        """Name of the save folder selected at the root of the card, or None"""
+        if not self.current_reader or self.navigation_stack:
+            return None
+        selection = self.dir_tree.selection()
+        entry = self.tree_item_data.get(selection[0]) if selection else None
+        if not entry or not entry['is_dir'] or entry['name'] == PARENT_DIRECTORY_LABEL:
+            return None
+        return entry['name']
+        
+    def show_save_menu(self, event):
+        """Right-click menu for the save folder under the cursor"""
+        item = self.dir_tree.identify_row(event.y)
+        if not item:
+            return
+        self.dir_tree.selection_set(item)
+        self.dir_tree.focus(item)
+        if not self.selected_save_name():
+            return
+        
+        self.save_menu.delete(0, tk.END)
+        self.save_menu.add_command(label="Export as .psu...", command=self.export_selected_save)
+        self.save_menu.add_command(label="Extract to Folder...", command=self.extract_selected_save)
+        if self.current_reader.supports_writing():
+            self.save_menu.add_separator()
+            self.save_menu.add_command(label="Delete Save", command=self.delete_selected_save)
+        self.save_menu.tk_popup(event.x_root, event.y_root)
+        
+    def refresh_card(self):
+        """Reload the listing and free space after the card content changed"""
+        self.current_reader.clear_superblock_cache()
+        self.load_directory_listing()
+        self.update_free_space()
+        
+    def select_root_entry(self, name):
+        for item, entry in self.tree_item_data.items():
+            if entry['name'] == name:
+                self.dir_tree.selection_set(item)
+                self.dir_tree.focus(item)
+                self.dir_tree.see(item)
+                return
+        
+    def export_selected_save(self):
+        """Export the selected save folder as a .psu file"""
+        name = self.selected_save_name()
+        if not name:
+            messagebox.showinfo("Export Save", "Select a save folder at the root of the card first.")
+            return
+        path = native_dialogs.asksaveasfilename(
+            parent=self.root,
+            title="Export Save",
+            initialfile=f"{name}.psu",
+            defaultextension=".psu",
+            filetypes=[("PS2 Save (EMS / uLaunchELF)", "*.psu"), ("All Files", "*.*")]
+        )
+        if not path:
+            return
+        try:
+            ps2_saves.save_to_psu(ps2_saves.read_save(self.current_reader, name), path)
+        except Exception as e:
+            messagebox.showerror("Export Failed", f"Could not export {name}:\n{e}")
+            return
+        self.status_var.set(f"Exported {name} to {os.path.basename(path)}")
+        
+    def extract_selected_save(self):
+        """Copy the files of the selected save into a folder on disk"""
+        name = self.selected_save_name()
+        if not name:
+            return
+        parent_folder = native_dialogs.askdirectory(parent=self.root, title="Extract Save To")
+        if not parent_folder:
+            return
+        try:
+            folder = ps2_saves.extract_to_folder(ps2_saves.read_save(self.current_reader, name), parent_folder)
+        except Exception as e:
+            messagebox.showerror("Extract Failed", f"Could not extract {name}:\n{e}")
+            return
+        self.status_var.set(f"Extracted {name} to {folder}")
+        
+    def import_save(self):
+        """Add a save from a .psu file to the card"""
+        if not self.current_reader or not self.current_reader.supports_writing():
+            return
+        path = native_dialogs.askopenfilename(
+            parent=self.root,
+            title="Import Save",
+            filetypes=[("PS2 Save (EMS / uLaunchELF)", "*.psu"), ("All Files", "*.*")]
+        )
+        if not path:
+            return
+        try:
+            save = ps2_saves.load_psu(path)
+        except Exception as e:
+            messagebox.showerror("Import Failed", f"Could not read {os.path.basename(path)}:\n{e}")
+            return
+        
+        replace = False
+        while True:
+            try:
+                ps2_saves.import_save(self.current_reader, save, replace=replace)
+                break
+            except SaveExistsError:
+                if replace or not messagebox.askyesno(
+                        "Replace Save",
+                        f"{save.name} already exists on this card.\n\n"
+                        f"Replace it with the save from {os.path.basename(path)}?"):
+                    return
+                replace = True
+            except NotEnoughSpaceError as e:
+                messagebox.showerror("Not Enough Space", str(e))
+                return
+            except Exception as e:
+                messagebox.showerror("Import Failed", f"Could not import {save.name}:\n{e}")
+                self.refresh_card()
+                return
+        
+        self.refresh_card()
+        self.select_root_entry(save.name)
+        self.status_var.set(f"Imported {save.name} ({self.format_size(save.size)})")
+        
+    def delete_selected_save(self):
+        """Delete the selected save folder from the card"""
+        name = self.selected_save_name()
+        if not name or not self.current_reader.supports_writing():
+            return
+        if not messagebox.askyesno("Delete Save",
+                                   f"Delete {name} from this card?\n\n"
+                                   "This cannot be undone. Export it first to keep a copy."):
+            return
+        try:
+            ps2_saves.delete_save(self.current_reader, name)
+        except Exception as e:
+            messagebox.showerror("Delete Failed", f"Could not delete {name}:\n{e}")
+            self.refresh_card()
+            return
+        self.refresh_card()
+        self.status_var.set(f"Deleted {name}")
         
     def update_navigation_state(self):
         """Refresh the breadcrumb, the Back button and the empty hint"""
@@ -469,6 +618,9 @@ class Ps2MemoryCardGUI:
                        ("Connect Physical Card", self.connect_to_physical_card, 'secondary')]
         else:
             actions = [("Card Information", self.show_card_info_popup, 'secondary')]
+            if self.current_reader.supports_writing():
+                actions.append(("Import Save", self.import_save, 'secondary'))
+            actions.append(("Export Save", self.export_selected_save, 'secondary'))
             if self.is_physical:
                 actions += [("Dump", self.dump_physical_card, 'secondary'),
                             ("Load", self.load_to_physical_card, 'secondary'),

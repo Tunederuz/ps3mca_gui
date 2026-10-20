@@ -30,7 +30,7 @@ _broken_tools = set()
 
 
 def askopenfilename(title='Open', filetypes=(), parent=None):
-    path = _native_dialog(save=False, title=title, filetypes=filetypes, parent=parent)
+    path = _native_dialog('open', title=title, filetypes=filetypes, parent=parent)
     if path is None:
         path = filedialog.askopenfilename(title=title, filetypes=filetypes,
                                           initialdir=_last_directory, parent=parent)
@@ -38,7 +38,7 @@ def askopenfilename(title='Open', filetypes=(), parent=None):
 
 
 def asksaveasfilename(title='Save', initialfile='', defaultextension='', filetypes=(), parent=None):
-    path = _native_dialog(save=True, title=title, filetypes=filetypes, parent=parent,
+    path = _native_dialog('save', title=title, filetypes=filetypes, parent=parent,
                           initialfile=initialfile)
     if path is None:
         path = filedialog.asksaveasfilename(title=title, initialfile=initialfile,
@@ -50,6 +50,14 @@ def asksaveasfilename(title='Save', initialfile='', defaultextension='', filetyp
     return _remember(path)
 
 
+def askdirectory(title='Select Folder', parent=None):
+    path = _native_dialog('directory', title=title, filetypes=(), parent=parent)
+    if path is None:
+        path = filedialog.askdirectory(title=title, initialdir=_last_directory, parent=parent)
+    # Remember the folder itself, not its parent
+    return _remember(os.path.join(path, '')) and path
+
+
 def _remember(path):
     global _last_directory
     if path:
@@ -57,11 +65,12 @@ def _remember(path):
     return path or ''
 
 
-def _native_dialog(save, title, filetypes, parent, initialfile=''):
-    """Return the chosen path, '' when cancelled, or None to fall back to Tk"""
+def _native_dialog(kind, title, filetypes, parent, initialfile=''):
+    """kind is 'open', 'save' or 'directory'. Return the chosen path, '' when cancelled,
+    or None to fall back to Tk"""
     try:
         for tool in _candidate_tools():
-            path = _run_tool(tool, save, title, filetypes, parent, initialfile)
+            path = _run_tool(tool, kind, title, filetypes, parent, initialfile)
             if path is not None:
                 return path
             _broken_tools.add(tool)
@@ -87,13 +96,13 @@ def _candidate_tools():
     return [tool for tool in tools if tool not in _broken_tools and shutil.which(tool)]
 
 
-def _run_tool(tool, save, title, filetypes, parent, initialfile):
+def _run_tool(tool, kind, title, filetypes, parent, initialfile):
     """Return the chosen path, '' when cancelled, or None when the tool did not work"""
     start = os.path.join(_last_directory, initialfile) if initialfile else _last_directory + os.sep
     if tool == 'kdialog':
-        command = _kdialog_command(save, title, filetypes, parent, start)
+        command = _kdialog_command(kind, title, filetypes, parent, start)
     else:
-        command = _zenity_command(save, title, filetypes, parent, start)
+        command = _zenity_command(kind, title, filetypes, parent, start)
 
     started = time.monotonic()
     try:
@@ -111,7 +120,9 @@ def _run_tool(tool, save, title, filetypes, parent, initialfile):
     path = _clean_path(result.stdout)
     if not path or not os.path.isabs(path):
         return None
-    if not save and not os.path.isfile(path):
+    if kind == 'open' and not os.path.isfile(path):
+        return None
+    if kind == 'directory' and not os.path.isdir(path):
         return None
     return path
 
@@ -125,10 +136,12 @@ def _clean_path(output):
     return path
 
 
-def _zenity_command(save, title, filetypes, parent, start):
+def _zenity_command(kind, title, filetypes, parent, start):
     command = ['zenity', '--file-selection', f'--title={title}', f'--filename={start}']
-    if save:
+    if kind == 'save':
         command.append('--save')
+    elif kind == 'directory':
+        command.append('--directory')
     for name, pattern in filetypes:
         command.append(f'--file-filter={name} | {_pattern(pattern)}')
     window = _window_id(parent)
@@ -137,10 +150,13 @@ def _zenity_command(save, title, filetypes, parent, start):
     return command
 
 
-def _kdialog_command(save, title, filetypes, parent, start):
-    filters = '\n'.join(f'{name} ({_pattern(pattern)})' for name, pattern in filetypes)
-    command = ['kdialog', '--title', title,
-               '--getsavefilename' if save else '--getopenfilename', start, filters]
+def _kdialog_command(kind, title, filetypes, parent, start):
+    if kind == 'directory':
+        command = ['kdialog', '--title', title, '--getexistingdirectory', start]
+    else:
+        filters = '\n'.join(f'{name} ({_pattern(pattern)})' for name, pattern in filetypes)
+        command = ['kdialog', '--title', title,
+                   '--getsavefilename' if kind == 'save' else '--getopenfilename', start, filters]
     window = _window_id(parent)
     if window is not None:
         command[1:1] = ['--attach', str(window)]
