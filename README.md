@@ -8,7 +8,7 @@ Fully supports:
 * Extract individual files from saves
 
 # Downloads
-Builds are produced by GitHub Actions for every push (see the workflow run artifacts).
+Builds are produced by GitHub Actions (can also be run manually from the Actions tab).
 Pushing a `v*` tag (e.g. `v1.0.0`) publishes a GitHub release with:
 * `ps2-memory-card-manager-<version>-x86_64.AppImage` (Linux)
 * `ps2-memory-card-manager-<version>.exe` (Windows)
