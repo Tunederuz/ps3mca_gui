@@ -1,11 +1,11 @@
-# PS2 Memory Card manager
-Fully supports:
-* Display superblock information
-* List content of Physical Memory Card (requires drivers)
-* List content of Virtual Memory Card (.ps2 format from PCSX2)
-* Erase (unformat) physical Memory Card content
-* Load .ps2 files into a physical memory card
+# PS2 Memory Card Manager
+One tool for PS2 memory cards, physical (through the PS3 Memory Card Adaptor) or virtual (.ps2 images from PCSX2):
+* Browse the content of a card and show its information and free space
+* Export a save as .psu (EMS / uLaunchELF format) or extract it to a folder
+* Import .psu saves and delete saves, on .ps2 images and physical cards
 * Extract individual files from saves
+* Dump a physical card to a .ps2 file, load a .ps2 file onto a physical card
+* Erase (unformat) a physical card
 
 # Downloads
 Builds are produced by GitHub Actions (can also be run manually from the Actions tab).
