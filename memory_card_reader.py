@@ -156,6 +156,37 @@ class Ps2MemoryCardReader(ABC):
         entry = fat_cluster[fat_offset]
         return entry
 
+    def get_free_cluster_count(self) -> int:
+        """
+        Count the free allocatable clusters, reading each FAT cluster only once.
+        Free FAT entries have the high bit cleared (0x7FFFFFFF).
+        """
+        superblock = self.get_superblock_info()
+        pages_per_cluster = superblock['pages_per_cluster']
+
+        def read_cluster(cluster_num):
+            first_page = cluster_num * pages_per_cluster
+            return b''.join(self.read_page(first_page + i)[0] for i in range(pages_per_cluster))
+
+        allocatable = superblock['alloc_end']
+        free = 0
+        index = 0
+        for indirect_cluster_num in superblock['ifc_list']:
+            if index >= allocatable:
+                break
+            indirect_cluster = struct.unpack("<256I", read_cluster(indirect_cluster_num))
+            for fat_cluster_num in indirect_cluster:
+                if index >= allocatable:
+                    break
+                fat_cluster = struct.unpack("<256I", read_cluster(fat_cluster_num))
+                free += sum(1 for entry in fat_cluster[:allocatable - index] if not entry & 0x80000000)
+                index += 256
+        return free
+
+    def get_cluster_size(self) -> int:
+        superblock = self.get_superblock_info()
+        return superblock['page_len'] * superblock['pages_per_cluster']
+
     def parse_datetime(self, dt_bytes):
         """
         Parse PS2 datetime format

@@ -7,7 +7,7 @@ A modern interface for reading both physical and virtual PS2 memory cards
 from time import sleep
 import tkinter as tk
 import tkinter.font as tkfont
-from tkinter import ttk, filedialog, messagebox, scrolledtext
+from tkinter import ttk, filedialog, messagebox
 import threading
 import os
 from memory_card_reader import PhysicalPs2MemoryCardReader, VirtualPs2MemoryCardReader, PARENT_DIRECTORY_LABEL
@@ -40,7 +40,11 @@ class Ps2MemoryCardGUI:
             'row_alt': '#242424',              # Alternate row background
             'type_dir': '#8cc4ff',             # Directory rows
             'type_ps1': '#ffb070',             # PS1 save rows
-            'type_pocketstation': '#c9a0ff'    # PocketStation rows
+            'type_pocketstation': '#c9a0ff',   # PocketStation rows
+            'ps_triangle': '#3fc1a5',          # Controller face button colors
+            'ps_circle': '#ff5a5f',
+            'ps_cross': '#7ab8ff',
+            'ps_square': '#e58fc2'
         }
 
         self.root.title("PS2 Memory Card Manager")
@@ -149,7 +153,8 @@ class Ps2MemoryCardGUI:
         self.bg_canvas.pack(fill=tk.BOTH, expand=True)
         
         # Compact header drawn on the canvas: title on the left, connection on the right
-        self.bg_canvas.create_text(24, 34, anchor=tk.W, text="PS2 Memory Card Manager",
+        self.draw_face_buttons(24, 34)
+        self.bg_canvas.create_text(116, 34, anchor=tk.W, text="PS2 Memory Card Manager",
                                    font=(self.ui_font, 18, 'bold'),
                                    fill=self.colors['text_primary'], tags='header')
         self.connection_text = self.bg_canvas.create_text(0, 34, anchor=tk.E, text="",
@@ -167,6 +172,26 @@ class Ps2MemoryCardGUI:
         self.setup_status_bar(self.bg_canvas)
         
         self.update_connection_badge()
+        
+    def draw_face_buttons(self, x, y):
+        """Draw the four controller shapes as a small logo, centered on y"""
+        canvas = self.bg_canvas
+        size, gap, width = 16, 6, 2.5
+        half = size / 2
+        top, bottom = y - half, y + half
+        
+        canvas.create_polygon(x + half, top, x + size, bottom, x, bottom, outline=self.colors['ps_triangle'],
+                              fill='', width=width, joinstyle=tk.ROUND, tags='header')
+        x += size + gap
+        canvas.create_oval(x, top, x + size, bottom, outline=self.colors['ps_circle'], width=width, tags='header')
+        x += size + gap
+        canvas.create_line(x, top, x + size, bottom, fill=self.colors['ps_cross'], width=width,
+                           capstyle=tk.ROUND, tags='header')
+        canvas.create_line(x, bottom, x + size, top, fill=self.colors['ps_cross'], width=width,
+                           capstyle=tk.ROUND, tags='header')
+        x += size + gap
+        canvas.create_rectangle(x, top, x + size, bottom, outline=self.colors['ps_square'], width=width,
+                                tags='header')
         
     @staticmethod
     def blend_colors(start, end, ratio):
@@ -261,6 +286,11 @@ class Ps2MemoryCardGUI:
                                          font=(self.ui_font, 11, 'bold'))
         self.current_dir_label.pack(side=tk.LEFT)
         
+        # Card actions on the right, rebuilt when the connection changes
+        self.toolbar = tk.Frame(nav_controls, bg=self.colors['bg_secondary'])
+        self.toolbar.pack(side=tk.RIGHT)
+        self.update_toolbar()
+        
         tree_container = tk.Frame(dir_frame, bg=self.colors['bg_secondary'])
         tree_container.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 16))
         
@@ -354,22 +384,98 @@ class Ps2MemoryCardGUI:
                 self.empty_label.config(text="This folder is empty")
             else:
                 self.empty_label.config(text="No memory card loaded\n\n"
-                                             "Open a .ps2 file or connect a physical card from the File menu")
+                                             "Open a .ps2 file or connect a physical card to get started")
             self.empty_label.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
         
     def setup_status_bar(self, parent):
         """Setup the status bar"""
         self.status_var = tk.StringVar(value="Ready to connect")
-        status_bar = tk.Label(parent, textvariable=self.status_var, 
-                             relief=tk.FLAT, 
-                             anchor=tk.W, 
-                             bg=self.colors['bg_secondary'], 
-                             fg=self.colors['text_secondary'],
-                             font=(self.ui_font, 10),
-                             padx=16,
-                             pady=8)
+        status_bar = tk.Frame(parent, bg=self.colors['bg_secondary'], padx=16, pady=8)
         status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=24, pady=(0, 20))
         
+        tk.Label(status_bar, textvariable=self.status_var, 
+                 anchor=tk.W, 
+                 bg=self.colors['bg_secondary'], 
+                 fg=self.colors['text_secondary'],
+                 font=(self.ui_font, 10)).pack(side=tk.LEFT)
+        
+        # Free space gauge, shown while a formatted card is loaded
+        self.space_frame = tk.Frame(status_bar, bg=self.colors['bg_secondary'])
+        self.space_label = tk.Label(self.space_frame, bg=self.colors['bg_secondary'],
+                                    fg=self.colors['text_secondary'], font=(self.ui_font, 10))
+        self.space_label.pack(side=tk.LEFT, padx=(0, 10))
+        self.space_bar = tk.Canvas(self.space_frame, width=160, height=8,
+                                   bg=self.colors['bg_tertiary'], highlightthickness=0)
+        self.space_bar.pack(side=tk.LEFT)
+        
+    def update_free_space(self):
+        """Show the free space of the card, like the PS2 browser does"""
+        self.space_frame.pack_forget()
+        if not self.current_reader:
+            return
+        try:
+            if not self.current_reader.is_formatted():
+                return
+            cluster_size = self.current_reader.get_cluster_size()
+            total_kb = self.current_reader.get_superblock_info()['alloc_end'] * cluster_size // 1024
+            free_kb = self.current_reader.get_free_cluster_count() * cluster_size // 1024
+        except Exception:
+            return
+        if not total_kb:
+            return
+        
+        free_ratio = free_kb / total_kb
+        if free_ratio < 0.05:
+            color = self.colors['accent_red']
+        elif free_ratio < 0.15:
+            color = self.colors['accent_orange']
+        else:
+            color = self.colors['accent_blue']
+        
+        self.space_label.config(text=f"{free_kb:,} KB free of {total_kb:,} KB")
+        self.space_bar.delete('all')
+        self.space_bar.create_rectangle(0, 0, int(self.space_bar['width']) * (1 - free_ratio), 8,
+                                        fill=color, outline='')
+        self.space_frame.pack(side=tk.RIGHT)
+        
+    def make_button(self, parent, text, command, kind='secondary'):
+        """Flat button: primary (blue), secondary (dark) or danger (red)"""
+        background, hover = {
+            'primary': (self.colors['accent_blue'], self.colors['accent_blue_bright']),
+            'secondary': (self.colors['bg_elevated'], self.colors['border']),
+            'danger': (self.colors['accent_red'], self.colors['ps_circle']),
+        }[kind]
+        return tk.Button(parent, text=text, command=command,
+                         bg=background,
+                         fg=self.colors['text_primary'],
+                         activebackground=hover,
+                         activeforeground=self.colors['text_primary'],
+                         font=(self.ui_font, 10, 'bold'),
+                         relief=tk.FLAT,
+                         bd=0,
+                         highlightthickness=0,
+                         padx=14,
+                         pady=5,
+                         cursor='hand2')
+        
+    def update_toolbar(self):
+        """Rebuild the card actions shown next to the breadcrumb"""
+        for child in self.toolbar.winfo_children():
+            child.destroy()
+        
+        if not self.current_reader:
+            actions = [("Open .ps2 File", self.load_memory_card_file, 'primary'),
+                       ("Connect Physical Card", self.connect_to_physical_card, 'secondary')]
+        else:
+            actions = [("Card Information", self.show_card_info_popup, 'secondary')]
+            if self.is_physical:
+                actions += [("Dump", self.dump_physical_card, 'secondary'),
+                            ("Load", self.load_to_physical_card, 'secondary'),
+                            ("Erase All", self.erase_physical_card, 'danger')]
+            actions.append(("Disconnect" if self.is_physical else "Close", self.disconnect, 'secondary'))
+        
+        for text, command, kind in actions:
+            self.make_button(self.toolbar, text, command, kind).pack(side=tk.LEFT, padx=(8, 0))
         
     def show_card_info_popup(self):
         """Show card information in a popup window"""
@@ -380,9 +486,8 @@ class Ps2MemoryCardGUI:
         # Create popup window
         popup = tk.Toplevel(self.root)
         popup.title("Memory Card Information")
-        popup.geometry("600x500")
         popup.configure(bg=self.colors['bg_primary'])
-        popup.resizable(True, True)
+        popup.resizable(False, False)
         
         # Center the popup
         popup.transient(self.root)
@@ -390,72 +495,71 @@ class Ps2MemoryCardGUI:
         
         # Main frame
         main_frame = tk.Frame(popup, bg=self.colors['bg_primary'])
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=24, pady=20)
         
         # Title
-        title_label = tk.Label(main_frame, text="PlayStation 2 Memory Card Information", 
-                              font=(self.ui_font, 20, 'bold'), 
+        title_label = tk.Label(main_frame, text="Memory Card Information", 
+                              font=(self.ui_font, 16, 'bold'), 
                               bg=self.colors['bg_primary'], 
                               fg=self.colors['text_primary'])
-        title_label.pack(pady=(0, 20))
-        
-        # Card info text widget
-        card_info_text = scrolledtext.ScrolledText(main_frame, 
-                                                  bg=self.colors['bg_tertiary'], 
-                                                  fg=self.colors['text_primary'],
-                                                  font=(self.mono_font, 10),
-                                                  relief=tk.FLAT,
-                                                  bd=1,
-                                                  insertbackground=self.colors['text_primary'],
-                                                  selectbackground=self.colors['accent_blue'],
-                                                  selectforeground=self.colors['text_primary'])
-        card_info_text.pack(fill=tk.BOTH, expand=True, pady=(0, 20))
+        title_label.pack(anchor=tk.W, pady=(0, 14))
         
         # Load card information
         try:
-            superblock = self.current_reader.get_superblock_info()
+            reader = self.current_reader
+            superblock = reader.get_superblock_info()
             
             # Calculate total size
             total_size_mb = (superblock['clusters_per_card'] * superblock['pages_per_cluster'] * 528) / (1024*1024)
+            cluster_size = reader.get_cluster_size()
+            free_kb = reader.get_free_cluster_count() * cluster_size // 1024
+            total_kb = superblock['alloc_end'] * cluster_size // 1024
             
-            info_text = f"""PS2 Memory Card - {total_size_mb:.1f} MB
-{'─' * 60}
-
-SPECIFICATIONS
-  Size: {total_size_mb:.1f} MB ({superblock['clusters_per_card']:,} clusters)
-  Format: {superblock['magic']} v{superblock['version']}
-  Page Size: {superblock['page_len']} bytes
-  Block Size: {superblock['pages_per_block']} pages
-
-FEATURES
-  ECC Support: {'✓' if self.current_reader.has_ecc_support() else '✗'}
-  Bad Block Management: {'✓' if self.current_reader.has_bad_blocks() else '✗'}
-  Erase Mode: {'Zero' if self.current_reader.erased_blocks_are_zeroes() else 'One'}
-
-STRUCTURE
-  Root Directory: Cluster {superblock['rootdir_cluster']}
-  Allocation Range: {superblock['alloc_offset']} - {superblock['alloc_end']}
-  Backup Blocks: {superblock['backup_block1']}, {superblock['backup_block2']}
-"""
-            
-            card_info_text.insert(1.0, info_text)
-            card_info_text.config(state=tk.DISABLED)
-            
+            sections = [
+                ("Specifications", [
+                    ("Size", f"{total_size_mb:.1f} MB ({superblock['clusters_per_card']:,} clusters)"),
+                    ("Free space", f"{free_kb:,} KB of {total_kb:,} KB"),
+                    ("Format", f"{superblock['magic'].strip()} v{superblock['version']}"),
+                    ("Page size", f"{superblock['page_len']} bytes"),
+                    ("Block size", f"{superblock['pages_per_block']} pages"),
+                ]),
+                ("Features", [
+                    ("ECC support", "Yes" if reader.has_ecc_support() else "No"),
+                    ("Bad block management", "Yes" if reader.has_bad_blocks() else "No"),
+                    ("Erase mode", "Zero" if reader.erased_blocks_are_zeroes() else "One"),
+                ]),
+                ("Structure", [
+                    ("Root directory", f"Cluster {superblock['rootdir_cluster']}"),
+                    ("Allocation range", f"{superblock['alloc_offset']} - {superblock['alloc_end']}"),
+                    ("Backup blocks", f"{superblock['backup_block1']}, {superblock['backup_block2']}"),
+                ]),
+            ]
         except Exception as e:
-            card_info_text.insert(1.0, f"Error loading card info: {str(e)}")
-            card_info_text.config(state=tk.DISABLED)
+            sections = [("Error", [("Card info", f"Could not be loaded: {str(e)}")])]
+        
+        for title, rows in sections:
+            section = tk.Frame(main_frame, bg=self.colors['bg_secondary'], padx=16, pady=12)
+            section.pack(fill=tk.X, pady=(0, 12))
+            # Same label width in every section so the values line up
+            section.columnconfigure(0, minsize=190)
+            section.columnconfigure(1, weight=1)
+            
+            tk.Label(section, text=title.upper(), bg=self.colors['bg_secondary'],
+                     fg=self.colors['text_accent'], font=(self.ui_font, 9, 'bold')
+                     ).grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 6))
+            for row, (label, value) in enumerate(rows, start=1):
+                tk.Label(section, text=label, bg=self.colors['bg_secondary'],
+                         fg=self.colors['text_muted'], font=(self.ui_font, 10)
+                         ).grid(row=row, column=0, sticky=tk.W, padx=(0, 24), pady=2)
+                tk.Label(section, text=value, bg=self.colors['bg_secondary'],
+                         fg=self.colors['text_primary'], font=(self.ui_font, 10)
+                         ).grid(row=row, column=1, sticky=tk.W, pady=2)
         
         # Close button
-        close_btn = tk.Button(main_frame, text="Close", command=popup.destroy,
-                             bg=self.colors['accent_blue'], 
-                             fg=self.colors['text_primary'], 
-                             font=(self.ui_font, 12, 'bold'),
-                             relief=tk.FLAT, 
-                             padx=35, 
-                             pady=10,
-                             activebackground=self.colors['accent_blue_bright'],
-                             activeforeground=self.colors['text_primary'])
-        close_btn.pack()
+        close_btn = self.make_button(main_frame, "Close", popup.destroy, 'primary')
+        close_btn.pack(anchor=tk.E, pady=(4, 0))
+        popup.bind('<Escape>', lambda event: popup.destroy())
+        
         
     def update_menu_state(self):
         """Update menu items based on connection state"""
@@ -617,6 +721,8 @@ STRUCTURE
         self.update_menu_state()
         self.update_tools_menu_state()
         self.update_connection_badge()
+        self.update_toolbar()
+        self.update_free_space()
         
         self.status_var.set("Ready")
         
@@ -651,6 +757,8 @@ STRUCTURE
         self.current_directory = None
         self.update_navigation_state()
         self.update_connection_badge()
+        self.update_toolbar()
+        self.update_free_space()
             
         # Update menu state
         self.update_menu_state()
@@ -1017,6 +1125,11 @@ STRUCTURE
         # Hide progress bar
         self.progress_frame.pack_forget()
         
+        # The card content changed, reload what is shown
+        self.current_reader.clear_superblock_cache()
+        self.load_directory_listing()
+        self.update_free_space()
+        
         # Show success message
         messagebox.showinfo("Load Complete", 
                           f"Memory card successfully loaded from:\n{file_path}\n\n"
@@ -1098,6 +1211,7 @@ STRUCTURE
         self.current_directory = None
         self.update_navigation_state()
         self.empty_label.config(text="Card erased")
+        self.update_free_space()
 
         # Show success message
         messagebox.showinfo("Erase Complete", "Memory card has been completely erased!")
