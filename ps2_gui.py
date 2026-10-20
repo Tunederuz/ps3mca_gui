@@ -38,7 +38,7 @@ class Ps2MemoryCardGUI:
             'ps2_gradient_end': '#003366'      # PS2 gradient end
         }
         
-        self.root.title("🎮 PS2 Memory Card Manager")
+        self.root.title("PS2 Memory Card Manager")
         self.root.geometry("1200x800")
         self.root.configure(bg=self.colors['bg_primary'])
         self.root.minsize(1000, 700)
@@ -110,7 +110,7 @@ class Ps2MemoryCardGUI:
                             activebackground=self.colors['accent_blue'],
                             activeforeground=self.colors['text_primary'])
         menubar.add_cascade(label="Tools", menu=self.tools_menu)
-        self.tools_menu.add_command(label="📊 Card Information", command=self.show_card_info_popup)
+        self.tools_menu.add_command(label="Card Information", command=self.show_card_info_popup)
         
         # Initialize tools menu state
         self.update_tools_menu_state()
@@ -125,7 +125,7 @@ class Ps2MemoryCardGUI:
         title_frame = tk.Frame(main_frame, bg=self.colors['bg_primary'])
         title_frame.pack(fill=tk.X, pady=(0, 25))
         
-        title_label = tk.Label(title_frame, text="🎮 PS2 Memory Card Manager", 
+        title_label = tk.Label(title_frame, text="PS2 Memory Card Manager", 
                               font=('Segoe UI', 28, 'bold'), 
                               bg=self.colors['bg_primary'], 
                               fg=self.colors['text_primary'])
@@ -167,7 +167,7 @@ class Ps2MemoryCardGUI:
         
     def setup_directory_frame(self, parent):
         """Setup the directory listing frame with integrated navigation"""
-        dir_frame = tk.LabelFrame(parent, text="📁 Directory Contents", 
+        dir_frame = tk.LabelFrame(parent, text="Directory Contents", 
                                  bg=self.colors['bg_secondary'], 
                                  fg=self.colors['text_primary'],
                                  font=('Segoe UI', 13, 'bold'),
@@ -182,7 +182,7 @@ class Ps2MemoryCardGUI:
         nav_controls.pack(fill=tk.X, padx=20, pady=(15, 10))
         
         # Back button
-        self.back_btn = tk.Button(nav_controls, text="⬅️ Back", command=self.navigate_back,
+        self.back_btn = tk.Button(nav_controls, text="Back", command=self.navigate_back,
                                  bg=self.colors['accent_blue'], 
                                  fg=self.colors['text_primary'], 
                                  font=('Segoe UI', 11, 'bold'),
@@ -194,7 +194,7 @@ class Ps2MemoryCardGUI:
         self.back_btn.pack(side=tk.LEFT, padx=(0, 18))
         
         # Current directory label
-        self.current_dir_label = tk.Label(nav_controls, text="📁 Current Directory: /", 
+        self.current_dir_label = tk.Label(nav_controls, text="Current Directory: /", 
                                          bg=self.colors['bg_secondary'], 
                                          fg=self.colors['text_accent'], 
                                          font=('Segoe UI', 11, 'bold'))
@@ -268,7 +268,7 @@ class Ps2MemoryCardGUI:
             
         # Create popup window
         popup = tk.Toplevel(self.root)
-        popup.title("📊 Memory Card Information")
+        popup.title("Memory Card Information")
         popup.geometry("600x500")
         popup.configure(bg=self.colors['bg_primary'])
         popup.resizable(True, True)
@@ -282,7 +282,7 @@ class Ps2MemoryCardGUI:
         main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         
         # Title
-        title_label = tk.Label(main_frame, text="📊 PlayStation 2 Memory Card Information", 
+        title_label = tk.Label(main_frame, text="PlayStation 2 Memory Card Information", 
                               font=('Segoe UI', 20, 'bold'), 
                               bg=self.colors['bg_primary'], 
                               fg=self.colors['text_primary'])
@@ -307,21 +307,21 @@ class Ps2MemoryCardGUI:
             # Calculate total size
             total_size_mb = (superblock['clusters_per_card'] * superblock['pages_per_cluster'] * 528) / (1024*1024)
             
-            info_text = f"""🎮 PS2 Memory Card - {total_size_mb:.1f} MB
+            info_text = f"""PS2 Memory Card - {total_size_mb:.1f} MB
 {'─' * 60}
 
-📊 SPECIFICATIONS
+SPECIFICATIONS
   Size: {total_size_mb:.1f} MB ({superblock['clusters_per_card']:,} clusters)
   Format: {superblock['magic']} v{superblock['version']}
   Page Size: {superblock['page_len']} bytes
   Block Size: {superblock['pages_per_block']} pages
 
-🔧 FEATURES
+FEATURES
   ECC Support: {'✓' if self.current_reader.has_ecc_support() else '✗'}
   Bad Block Management: {'✓' if self.current_reader.has_bad_blocks() else '✗'}
   Erase Mode: {'Zero' if self.current_reader.erased_blocks_are_zeroes() else 'One'}
 
-📁 STRUCTURE
+STRUCTURE
   Root Directory: Cluster {superblock['rootdir_cluster']}
   Allocation Range: {superblock['alloc_offset']} - {superblock['alloc_end']}
   Backup Blocks: {superblock['backup_block1']}, {superblock['backup_block2']}
@@ -350,18 +350,18 @@ class Ps2MemoryCardGUI:
         """Update menu items based on connection state"""
         # Clear existing disconnect/close commands if they exist
         try:
-            self.file_menu.delete("🔌 Disconnect")
+            self.file_menu.delete("Disconnect")
         except:
             pass
         try:
-            self.file_menu.delete("📁 Close Memory Card File")
+            self.file_menu.delete("Close Memory Card File")
         except:
             pass
             
         # Clear existing connection commands if they exist
         try:
-            self.file_menu.delete("📁 Load Memory Card File")
-            self.file_menu.delete("🔌 Connect to Physical Memory Card")
+            self.file_menu.delete("Load Memory Card File")
+            self.file_menu.delete("Connect to Physical Memory Card")
         except:
             pass
             
@@ -369,29 +369,29 @@ class Ps2MemoryCardGUI:
             # Connected state - show disconnect option
             if self.is_physical:
                 # Physical card connected - show disconnect
-                self.file_menu.insert_command(0, label="🔌 Disconnect", command=self.disconnect)
+                self.file_menu.insert_command(0, label="Disconnect", command=self.disconnect)
             else:
                 # Virtual card loaded - show close option
-                self.file_menu.insert_command(0, label="📁 Close Memory Card File", command=self.disconnect)
+                self.file_menu.insert_command(0, label="Close Memory Card File", command=self.disconnect)
             # Hide connection options when connected
         else:
             # Not connected - show connection options
-            self.file_menu.insert_command(0, label="📁 Load Memory Card File", command=self.load_memory_card_file)
-            self.file_menu.insert_command(1, label="🔌 Connect to Physical Memory Card", command=self.connect_to_physical_card)
+            self.file_menu.insert_command(0, label="Load Memory Card File", command=self.load_memory_card_file)
+            self.file_menu.insert_command(1, label="Connect to Physical Memory Card", command=self.connect_to_physical_card)
         
     def update_tools_menu_state(self):
         """Update tools menu items based on connection state"""
         # Clear existing physical card tools if they exist
         try:
-            self.tools_menu.delete("💾 Dump to .ps2 File")
+            self.tools_menu.delete("Dump to .ps2 File")
         except:
             pass
         try:
-            self.tools_menu.delete("📥 Load from .ps2 File")
+            self.tools_menu.delete("Load from .ps2 File")
         except:
             pass
         try:
-            self.tools_menu.delete("🧹 Erase All")
+            self.tools_menu.delete("Erase All")
         except:
             pass
         try:
@@ -402,9 +402,9 @@ class Ps2MemoryCardGUI:
         # Add physical card tools only if physical card is connected
         if self.current_reader and self.is_physical:
             self.tools_menu.add_separator()
-            self.tools_menu.add_command(label="💾 Dump to .ps2 File", command=self.dump_physical_card)
-            self.tools_menu.add_command(label="📥 Load from .ps2 File", command=self.load_to_physical_card)
-            self.tools_menu.add_command(label="🧹 Erase All", command=self.erase_physical_card)
+            self.tools_menu.add_command(label="Dump to .ps2 File", command=self.dump_physical_card)
+            self.tools_menu.add_command(label="Load from .ps2 File", command=self.load_to_physical_card)
+            self.tools_menu.add_command(label="Erase All", command=self.erase_physical_card)
         
     def load_memory_card_file(self):
         """Load a memory card file from File menu"""
@@ -564,18 +564,14 @@ class Ps2MemoryCardGUI:
                 if entry:  # Skip None entries
                     # Type icon
                     if entry['is_dir']:
-                        type_icon = "📁"
                         type_text = "DIR"
                         #if entry['is_hidden']:
                         #    type_text = f"{type_text} [HIDDEN]"
                     elif entry['is_ps1']:
-                        type_icon = "🎮"
                         type_text = "PS1"
                     elif entry['is_pocketstation']:
-                        type_icon = "📱"
                         type_text = "PS"
                     else:
-                        type_icon = "📄"
                         type_text = "FILE"
                     
                     # Size formatting
@@ -588,7 +584,7 @@ class Ps2MemoryCardGUI:
                     name = entry['name']
                     
                     # Insert into tree
-                    item = self.dir_tree.insert('', 'end', text=f"{type_icon} {name}", 
+                    item = self.dir_tree.insert('', 'end', text=name, 
                                               values=(type_text, size_str, entry['created'], entry['modified']))
                     
                     # Store additional hidden data in dictionary
@@ -596,7 +592,7 @@ class Ps2MemoryCardGUI:
                     
             # Update current directory label
             self.current_directory = root_cluster
-            self.current_dir_label.config(text=f"📁 Current Directory: Cluster {root_cluster}")
+            self.current_dir_label.config(text=f"Current Directory: Cluster {root_cluster}")
             
         except Exception as e:
             messagebox.showerror("Directory Error", f"Failed to load directory: {str(e)}")
@@ -666,8 +662,8 @@ class Ps2MemoryCardGUI:
                 self.populate_directory_tree(entries)
                 
                 # Update status and current directory label
-                self.status_var.set(f"📁 Navigated to directory cluster {cluster_num}")
-                self.current_dir_label.config(text=f"📁 Current Directory: Cluster {cluster_num}")
+                self.status_var.set(f"Navigated to directory cluster {cluster_num}")
+                self.current_dir_label.config(text=f"Current Directory: Cluster {cluster_num}")
             else:
                 messagebox.showinfo("Empty Directory", f"Directory cluster {cluster_num} is empty or could not be read.")
                 
@@ -695,8 +691,8 @@ class Ps2MemoryCardGUI:
                 self.populate_directory_tree(entries)
                 
                 # Update status and current directory label
-                self.status_var.set(f"⬅️ Navigated back to cluster {previous_cluster}")
-                self.current_dir_label.config(text=f"📁 Current Directory: Cluster {previous_cluster}")
+                self.status_var.set(f"Navigated back to cluster {previous_cluster}")
+                self.current_dir_label.config(text=f"Current Directory: Cluster {previous_cluster}")
             else:
                 messagebox.showinfo("Navigation Error", f"Could not navigate back to cluster {previous_cluster}")
                 
@@ -721,18 +717,14 @@ class Ps2MemoryCardGUI:
             if entry:
                 # Type icon and text
                 if entry['is_dir']:
-                    type_icon = "📁"
                     type_text = "DIR"
                     #if entry['is_hidden']:
                     #    type_text = f"{type_text} [HIDDEN]"
                 elif entry['is_ps1']:
-                    type_icon = "🎮"
                     type_text = "PS1"
                 elif entry['is_pocketstation']:
-                    type_icon = "📱"
                     type_text = "PS"
                 else:
-                    type_icon = "📄"
                     type_text = "FILE"
                 
                 # Size formatting
@@ -745,7 +737,7 @@ class Ps2MemoryCardGUI:
                 name = entry['name']
                 
                 # Insert into tree
-                item = self.dir_tree.insert('', 'end', text=f"{type_icon} {name}", 
+                item = self.dir_tree.insert('', 'end', text=name, 
                                    values=(type_text, size_str, entry['created'], entry['modified']))
                 
                 # Store additional hidden data in dictionary
@@ -768,7 +760,7 @@ class Ps2MemoryCardGUI:
             return
             
         try:
-            self.status_var.set("💾 Starting memory card dump...")
+            self.status_var.set("Starting memory card dump...")
             
             # Show progress bar
             self.progress_frame.pack(fill=tk.X, padx=20, pady=(0, 15))
@@ -832,7 +824,7 @@ class Ps2MemoryCardGUI:
             return
             
         try:
-            self.status_var.set("📥 Starting memory card load...")
+            self.status_var.set("Starting memory card load...")
             
             # Show progress bar
             self.progress_frame.pack(fill=tk.X, padx=20, pady=(0, 15))
@@ -907,7 +899,7 @@ class Ps2MemoryCardGUI:
 
     def on_dump_success(self, file_path):
         """Handle successful dump completion"""
-        self.status_var.set(f"✅ Dump completed: {os.path.basename(file_path)}")
+        self.status_var.set(f"Dump completed: {os.path.basename(file_path)}")
         
         # Hide progress bar
         self.progress_frame.pack_forget()
@@ -919,7 +911,7 @@ class Ps2MemoryCardGUI:
 
     def on_dump_error(self, error_msg):
         """Handle dump error"""
-        self.status_var.set(f"❌ Dump failed: {error_msg}")
+        self.status_var.set(f"Dump failed: {error_msg}")
         
         # Hide progress bar
         self.progress_frame.pack_forget()
@@ -928,7 +920,7 @@ class Ps2MemoryCardGUI:
 
     def on_load_success(self, file_path):
         """Handle successful load completion"""
-        self.status_var.set(f"✅ Load completed: {os.path.basename(file_path)}")
+        self.status_var.set(f"Load completed: {os.path.basename(file_path)}")
         
         # Hide progress bar
         self.progress_frame.pack_forget()
@@ -940,7 +932,7 @@ class Ps2MemoryCardGUI:
 
     def on_load_error(self, error_msg):
         """Handle load error"""
-        self.status_var.set(f"❌ Load failed: {error_msg}")
+        self.status_var.set(f"Load failed: {error_msg}")
         
         # Hide progress bar
         self.progress_frame.pack_forget()
@@ -955,13 +947,13 @@ class Ps2MemoryCardGUI:
             
         # Confirmation dialog
         result = messagebox.askyesno("Confirm Erase", 
-                                   "⚠️ WARNING: This will permanently erase ALL data on the memory card!\n\n"
+                                   "WARNING: This will permanently erase ALL data on the memory card!\n\n"
                                    "This action cannot be undone. Are you sure you want to continue?")
         if not result:
             return
             
         # Show progress
-        self.status_var.set("🧹 Erasing memory card...")
+        self.status_var.set("Erasing memory card...")
         
         # Show progress bar
         self.progress_frame.pack(fill=tk.X, padx=20, pady=(0, 15))
@@ -996,11 +988,11 @@ class Ps2MemoryCardGUI:
         """Update the erase progress bar and label"""
         self.progress_bar['value'] = percentage
         self.progress_label.config(text=f"Erasing memory card... {current}/{total} pages ({percentage:.1f}%)")
-        self.status_var.set(f"🧹 Erasing... {percentage:.1f}%")
+        self.status_var.set(f"Erasing... {percentage:.1f}%")
 
     def on_erase_success(self):
         """Handle successful erase completion"""
-        self.status_var.set("✅ Erase completed")
+        self.status_var.set("Erase completed")
         
         # Hide progress bar
         self.progress_frame.pack_forget()
@@ -1011,14 +1003,14 @@ class Ps2MemoryCardGUI:
         self.tree_item_data.clear()
         self.navigation_stack.clear()
         self.current_directory = None
-        self.current_dir_label.config(text="📁 Current Directory: (card erased)")
+        self.current_dir_label.config(text="Current Directory: (card erased)")
 
         # Show success message
         messagebox.showinfo("Erase Complete", "Memory card has been completely erased!")
 
     def on_erase_error(self, error_msg):
         """Handle erase error"""
-        self.status_var.set(f"❌ Erase failed: {error_msg}")
+        self.status_var.set(f"Erase failed: {error_msg}")
         
         # Hide progress bar
         self.progress_frame.pack_forget()
