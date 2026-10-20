@@ -7,9 +7,10 @@ A modern interface for reading both physical and virtual PS2 memory cards
 from time import sleep
 import tkinter as tk
 import tkinter.font as tkfont
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, messagebox
 import threading
 import os
+import native_dialogs
 from memory_card_reader import PhysicalPs2MemoryCardReader, VirtualPs2MemoryCardReader, PARENT_DIRECTORY_LABEL
 
 class Ps2MemoryCardGUI:
@@ -627,7 +628,8 @@ class Ps2MemoryCardGUI:
         self.on_connection_change()
         
         # Browse for file and connect if selected
-        file_path = filedialog.askopenfilename(
+        file_path = native_dialogs.askopenfilename(
+            parent=self.root,
             title="Select PS2 Memory Card File",
             filetypes=[("PS2 Memory Card", "*.ps2"), ("All Files", "*.*")]
         )
@@ -650,7 +652,8 @@ class Ps2MemoryCardGUI:
             
     def browse_file(self):
         """Browse for a .ps2 file"""
-        file_path = filedialog.askopenfilename(
+        file_path = native_dialogs.askopenfilename(
+            parent=self.root,
             title="Select PS2 Memory Card File",
             filetypes=[("PS2 Memory Card", "*.ps2"), ("All Files", "*.*")]
         )
@@ -820,7 +823,8 @@ class Ps2MemoryCardGUI:
             if len(extension) > 0:
                 extension = f".{extension}"
 
-            file_path = filedialog.asksaveasfilename(
+            file_path = native_dialogs.asksaveasfilename(
+                parent=self.root,
                 title="Save File",
                 initialfile=entry_data['name'],
                 defaultextension=f"{extension}",
@@ -950,7 +954,8 @@ class Ps2MemoryCardGUI:
             return
             
         # Ask user for save location
-        file_path = filedialog.asksaveasfilename(
+        file_path = native_dialogs.asksaveasfilename(
+            parent=self.root,
             title="Save Memory Card Dump",
             defaultextension=".ps2",
             filetypes=[("PS2 Memory Card", "*.ps2"), ("All Files", "*.*")]
@@ -1011,7 +1016,8 @@ class Ps2MemoryCardGUI:
             return
             
         # Ask user for source .ps2 file
-        file_path = filedialog.askopenfilename(
+        file_path = native_dialogs.askopenfilename(
+            parent=self.root,
             title="Select PS2 Memory Card File to Load",
             filetypes=[("PS2 Memory Card", "*.ps2"), ("All Files", "*.*")]
         )
