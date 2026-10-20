@@ -34,3 +34,6 @@ packaging/build_appimage.sh   # Linux AppImage in dist/
 
 # Credits
 JasonBrownDeveloper - https://github.com/JasonBrownDeveloper/ps3mca - For ps3mca.py base file used for physical memory card operations
+# TODO
+* Import `.max` saves (Action Replay Max: `Ps2PowerSave` header, LZARI compressed content)
+* Import `.cbs` saves (CodeBreaker: zlib compressed, RC4 encrypted content)
