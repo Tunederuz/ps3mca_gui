@@ -5,6 +5,7 @@ One tool for PS2 memory cards, physical (through the PS3 Memory Card Adaptor) or
 * Import .psu saves and delete saves, on .ps2 images and physical cards
 * Extract individual files from saves
 * Dump a physical card to a .ps2 file, load a .ps2 file onto a physical card
+* Create new .ps2 files and format cards, physical or virtual
 * Erase (unformat) a physical card
 
 # Downloads
