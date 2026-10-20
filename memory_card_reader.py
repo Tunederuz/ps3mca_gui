@@ -58,6 +58,12 @@ class Ps2MemoryCardReader(ABC):
         """
         pass
 
+    def read_raw_page(self, number: int) -> tuple[bytes, bytes]:
+        """
+        Reads a page and its ECC as stored, without any error correction.
+        """
+        return self.read_page(number)
+
     @abstractmethod
     def erase_page(self, number: int):
         """
@@ -628,8 +634,9 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
         # Sometimes reading hangs if the sentinel isn't explicitly set
         self.request_response("CS_PUT_SENTINEL")
 
-    def read_page(self, num: int) -> tuple[bytes, bytes]:
+    def _transfer_page(self, num: int) -> tuple[list[int], list[int]]:
         page = []
+        old_ecc = []
         self.request_response("CS_PUT_READ_INDEX", data=list(struct.pack(">I", num)))
         card_specs = self.get_card_specs()
         for _ in range(card_specs['pagesize'] // 8):
@@ -639,7 +646,6 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
             page += chunk
 
         if card_specs['ecc']:
-            old_ecc = []
             for _ in range(((card_specs['pagesize'] // 128) * 3 + 4) // 8):
                 chunk, ecc = self.request_response("CS_GET_READ_8", reverse=False)
                 if functools.reduce(operator.xor, chunk) != ecc:
@@ -647,6 +653,15 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
                 old_ecc+= chunk
 
         self.request_response("CS_IO_FIN")
+        return page, old_ecc
+
+    def read_raw_page(self, number: int) -> tuple[bytes, bytes]:
+        page, ecc = self._transfer_page(number)
+        return bytes(page), bytes(ecc)
+
+    def read_page(self, num: int) -> tuple[bytes, bytes]:
+        page, old_ecc = self._transfer_page(num)
+        card_specs = self.get_card_specs()
 
         if card_specs['ecc'] and old_ecc[-1] != card_specs['erased_byte']:
             def parityOf(int_type):
