@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=PS2 Memory Card Manager
+Comment=Read, dump and load PS2 memory cards through a PS3 Memory Card Adaptor
+Exec=ps2-memory-card-manager
+Icon=ps2-memory-card-manager
+Categories=Utility;
+Terminal=false
