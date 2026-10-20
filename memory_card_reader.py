@@ -675,7 +675,9 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
                 # Detect errors
                 test_ecc = [a ^ b for a, b in zip(old_ecc[j*3:j*3+3], new_ecc)]
                 bits = sum(countSetBits(n) for n in test_ecc)
-                if bits == 10:
+                # A single flipped data bit shows as 10 differing bits, which locate it.
+                # Damaged pages can give 10 bits that point nowhere, leave those alone
+                if bits == 10 and (test_ecc[0] >> 4) < 8 and test_ecc[1] < 128:
                     print("Data Error")
                     page[(j*128)+(127-test_ecc[1])] ^= 1 << (test_ecc[0] >> 4)
                     # TODO commit page
