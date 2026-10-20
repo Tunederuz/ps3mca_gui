@@ -107,7 +107,8 @@ class CardWriter:
                     page = data[i * page_size:(i + 1) * page_size]
                     self.reader.write_page(absolute * self.pages_per_cluster + i, page,
                                            page_ecc(page) if use_ecc else None)
-        self.reader.flush()
+            # Each stage reaches the card before the next one starts
+            self.reader.flush()
         self._dirty.clear()
         self.reader.clear_superblock_cache()
 
