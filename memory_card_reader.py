@@ -230,22 +230,22 @@ class Ps2MemoryCardReader(ABC):
         superblock_info = self.get_superblock_info()
         return superblock_info['rootdir_cluster']
 
-    def get_directory_clusters(self, start_cluster):
+    def get_cluster_chain(self, start_cluster):
         superblock_info = self.get_superblock_info()
         alloc_offset = superblock_info['alloc_offset']
-        directories = []
+        clusters = []
         cluster = start_cluster
         while True:
-            directories.append(alloc_offset + cluster)
+            clusters.append(alloc_offset + cluster)
             entry = self.get_fat_entry(cluster)
             if entry == 0xFFFFFFFF:
                 break
             cluster = entry & 0x7FFFFFFF
-        return directories
+        return clusters
 
     def get_directory_content(self, parent_directory_cluster):
         superblock = self.get_superblock_info()
-        directories = self.get_directory_clusters(parent_directory_cluster)
+        directories = self.get_cluster_chain(parent_directory_cluster)
         entries = []
         for cluster in directories:
             cluster_page = cluster * superblock['pages_per_cluster']
@@ -278,30 +278,23 @@ class Ps2MemoryCardReader(ABC):
             self.erase_page(i)
 
     def read_file(self, file_cluster: int, size_in_bytes: int) -> bytes:
-        superblock_info = self.get_superblock_info()
-        specs = self.get_card_specs()
+        if size_in_bytes == 0:
+            return b''
 
-        alloc_offset = superblock_info['alloc_offset']
-        cluster_location = alloc_offset + file_cluster
-        first_page_location = cluster_location * superblock_info['pages_per_cluster']
-
-        total_pages = size_in_bytes // (specs['pagesize'] + specs['eccsize']) + 1
-
-        read_bytes = 0
+        pages_per_cluster = self.get_superblock_info()['pages_per_cluster']
         file_data = b''
 
-        for i in range(total_pages):
-            data_page, _ = self.read_page(first_page_location + i)
-            remaining_bytes = size_in_bytes - read_bytes
-
-            if remaining_bytes < len(data_page):
-                file_data += data_page[:remaining_bytes]
+        for cluster in self.get_cluster_chain(file_cluster):
+            first_page = cluster * pages_per_cluster
+            for page_offset in range(pages_per_cluster):
+                file_data += self.read_page(first_page + page_offset)[0]
+            if len(file_data) >= size_in_bytes:
                 break
-            else:
-                file_data += data_page
-                read_bytes += len(data_page)
 
-        return file_data
+        if len(file_data) < size_in_bytes:
+            raise ValueError(f"Cluster chain ended after {len(file_data)} of {size_in_bytes} bytes")
+
+        return file_data[:size_in_bytes]
 
 class VirtualPs2MemoryCardReader(Ps2MemoryCardReader):
     """
