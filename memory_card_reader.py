@@ -246,30 +246,37 @@ class Ps2MemoryCardReader(ABC):
             cluster = entry & 0x7FFFFFFF
         return clusters
 
+    def read_directory_slots(self, directory_cluster):
+        pages_per_cluster = self.get_superblock_info()['pages_per_cluster']
+        slots = []
+        for cluster in self.get_cluster_chain(directory_cluster):
+            cluster_page = cluster * pages_per_cluster
+            cluster_data = b''.join(self.read_page(cluster_page + i)[0] for i in range(pages_per_cluster))
+            slots += [cluster_data[i:i + 512] for i in range(0, len(cluster_data), 512)]
+        return slots
+
+    def get_directory_entry_count(self, directory_slots, is_root):
+        self_entry = directory_slots[0]
+        if is_root:
+            return struct.unpack('<I', self_entry[4:8])[0]
+        parent_cluster, index_in_parent = struct.unpack('<II', self_entry[16:24])
+        parent_slots = self.read_directory_slots(parent_cluster)
+        return struct.unpack('<I', parent_slots[index_in_parent][4:8])[0]
+
     def get_directory_content(self, parent_directory_cluster):
-        superblock = self.get_superblock_info()
-        directories = self.get_cluster_chain(parent_directory_cluster)
+        is_root = parent_directory_cluster == self.get_root_directory_cluster()
+        slots = self.read_directory_slots(parent_directory_cluster)
+        entry_count = self.get_directory_entry_count(slots, is_root)
         entries = []
-        for cluster in directories:
-            cluster_page = cluster * superblock['pages_per_cluster']
-            entry_data = self.read_page(cluster_page)[0] + self.read_page(cluster_page + 1)[0]
-            first_entry = self.parse_directory_entry(entry_data[0:512])
-            second_entry = self.parse_directory_entry(entry_data[512:512+512])
-
-            if first_entry is not None and first_entry['name'] != PLACEHOLDER_FOLDER_NAME:
-                is_parent_directory = first_entry['name'] == PARENT_POINTER_FOLDER_NAME
-
-                if is_parent_directory:
-                    first_entry['name'] = '<Parent Directory>'
-                if not is_parent_directory or (is_parent_directory and parent_directory_cluster != self.get_root_directory_cluster()):
-                    entries.append(first_entry)
-            if second_entry is not None and second_entry['name'] != PLACEHOLDER_FOLDER_NAME:
-                is_parent_directory = second_entry['name'] == PARENT_POINTER_FOLDER_NAME
-
-                if is_parent_directory:
-                    second_entry['name'] = '<Parent Directory>'
-                if not is_parent_directory or (is_parent_directory and parent_directory_cluster != self.get_root_directory_cluster()):
-                    entries.append(second_entry)
+        for slot in slots[:entry_count]:
+            entry = self.parse_directory_entry(slot)
+            if entry is None or not entry['exists'] or entry['name'] == PLACEHOLDER_FOLDER_NAME:
+                continue
+            if entry['name'] == PARENT_POINTER_FOLDER_NAME:
+                if is_root:
+                    continue
+                entry['name'] = '<Parent Directory>'
+            entries.append(entry)
         return entries
 
     def erase_all(self):
