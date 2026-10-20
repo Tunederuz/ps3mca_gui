@@ -6,6 +6,13 @@ import struct
 import pyDes
 import usb.core
 
+try:
+    # Bundled libusb, so the frozen builds work without a system libusb
+    import libusb_package
+    USB_BACKEND = libusb_package.get_libusb1_backend()
+except ImportError:
+    USB_BACKEND = None
+
 # Card flag constants
 CF_USE_ECC = 0x01          # Card supports ECC
 CF_BAD_BLOCK = 0x08        # Card may have bad blocks  
@@ -647,7 +654,7 @@ class PhysicalPs2MemoryCardReader(Ps2MemoryCardReader):
         self.request_response("CS_IO_FIN")
 
     def open(self) -> None:
-        self.dev = usb.core.find(idVendor=0x054c, idProduct=0x02ea)
+        self.dev = usb.core.find(idVendor=0x054c, idProduct=0x02ea, backend=USB_BACKEND)
         if self.dev is None:
             raise ValueError("ps3mca is not connected")
         self.dev.set_configuration()
