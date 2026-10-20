@@ -82,6 +82,18 @@ class Ps2MemoryCardReader(ABC):
     def clear_superblock_cache(self) -> None:
         self.superblock_cache = None
 
+    def supports_writing(self) -> bool:
+        """
+        Whether saves can be added or deleted on this card.
+        """
+        return False
+
+    def flush(self) -> None:
+        """
+        Makes sure written pages reached the card.
+        """
+        pass
+
     def get_superblock_info(self) -> dict:
         """
         Gets the superblock from the memory card.
@@ -350,12 +362,24 @@ class VirtualPs2MemoryCardReader(Ps2MemoryCardReader):
     A virtual PS2 Memory Card reader that reads from a file.
     """
     memory_card_file = None
+    writable = False
 
     def __init__(self, file_path: str):
         self.file_path = file_path
 
     def open(self) -> None:
-        self.memory_card_file = open(self.file_path, "rb")
+        try:
+            self.memory_card_file = open(self.file_path, "r+b")
+            self.writable = True
+        except PermissionError:
+            self.memory_card_file = open(self.file_path, "rb")
+            self.writable = False
+
+    def supports_writing(self) -> bool:
+        return self.writable
+
+    def flush(self) -> None:
+        self.memory_card_file.flush()
     
     def close(self) -> None:
         self.memory_card_file.close()
@@ -372,19 +396,18 @@ class VirtualPs2MemoryCardReader(Ps2MemoryCardReader):
     def write_page(self, number: int, data: bytes, ecc: bytes):
         card_specs = self.get_card_specs()
         page_size = card_specs['pagesize']
-
-        ecc = card_specs['ecc']
-        ecc_size = card_specs['eccsize']
+        ecc_size = card_specs['eccsize'] if card_specs['ecc'] else 0
 
         if len(data) != page_size:
             raise ValueError("Write page data is not the correct length")
 
-        if ecc and len(ecc) != ecc_size:
+        if ecc_size and (ecc is None or len(ecc) != ecc_size):
             raise ValueError("Write page ecc is not the correct length")
 
-        self.memory_card_file.seek(number * page_size)
+        # Pages are stored with their ECC, so each one takes page_size + ecc_size bytes
+        self.memory_card_file.seek(number * (page_size + ecc_size))
         self.memory_card_file.write(data)
-        if ecc:
+        if ecc_size:
             self.memory_card_file.write(ecc)
     
     def generate_superblock_info(self) -> dict:
